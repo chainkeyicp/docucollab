@@ -168,23 +168,30 @@
       }
 
       if (loadId !== activeLoadId) return;
+      console.log("[DocuCollab] Decrypted data:", finalData.byteLength, "bytes, first4:", Array.from(finalData.slice(0, 4)));
       cachedDecryptedData = finalData.slice();
 
+      const previewBytes = finalData.slice();
+
       if (doc.mimeType.startsWith("image/")) {
-        const blob = new Blob([finalData.slice()], { type: doc.mimeType });
+        const blob = new Blob([previewBytes], { type: doc.mimeType });
         imageUrl = URL.createObjectURL(blob);
       } else if (doc.mimeType === "application/pdf" || doc.name.toLowerCase().endsWith(".pdf")) {
-        const blob = new Blob([finalData.slice()], { type: "application/pdf" });
+        const blob = new Blob([previewBytes], { type: "application/pdf" });
         pdfUrl = URL.createObjectURL(blob);
       }
 
       extractionLoading = true;
-      const extraction = await extractTextFromBytes(finalData.slice(), {
-        name: doc.name,
-        mimeType: doc.mimeType,
-      });
-      if (loadId !== activeLoadId) return;
-      applyExtraction(extraction);
+      try {
+        const extraction = await extractTextFromBytes(finalData.slice(), {
+          name: doc.name,
+          mimeType: doc.mimeType,
+        });
+        if (loadId !== activeLoadId) return;
+        applyExtraction(extraction);
+      } catch (extractErr) {
+        console.warn("Text extraction failed, preview unaffected:", extractErr);
+      }
     } catch (e) {
       console.error("Load error:", e);
     } finally {
@@ -232,7 +239,10 @@
       const a = document.createElement("a");
       a.href = url;
       a.download = doc.name;
+      a.style.display = "none";
+      document.body.appendChild(a);
       a.click();
+      document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 60000);
     } catch (e) {
       notify("Download failed: " + e.message, "error");
