@@ -51,6 +51,7 @@
       const extraction = await extractTextFromBytes(originalBuffer.slice(0), {
         name: file.name,
         mimeType: file.type,
+        onProgress: (msg) => { extractionStatus = msg; },
       });
 
       extractionDetail = describeExtraction(extraction);

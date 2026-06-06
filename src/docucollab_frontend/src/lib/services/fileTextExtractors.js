@@ -60,11 +60,7 @@ export async function extractTextFromBytes(bytes, options = {}) {
     }
 
     if (format === "image") {
-      return emptyResult({
-        format,
-        method: "ocr-required",
-        warnings: ["Images need OCR before AI analysis. OCR support is planned next."],
-      });
+      return await extractImageText(arrayBuffer, options);
     }
 
     return emptyResult({
@@ -145,11 +141,14 @@ async function extractPdfText(arrayBuffer, options) {
     if (text) pages.push(`Page ${pageNumber}\n${text}`);
   }
 
+  if (pages.length === 0 && pdf.numPages > 0) {
+    return await ocrPdfPages(pdf, options);
+  }
+
   return finalizeText(pages.join("\n\n"), {
     format: "pdf",
     method: "pdfjs-dist",
     maxChars: options.maxChars,
-    warnings: pages.length === 0 ? ["No selectable PDF text found. This may be a scanned PDF that needs OCR."] : [],
     stats: { pageCount: pdf.numPages },
   });
 }
@@ -203,6 +202,78 @@ async function extractXlsxText(arrayBuffer, options) {
     warnings: parts.length === 0 ? ["No readable spreadsheet cells found."] : [],
     stats: { sheetCount: sheets.length },
   });
+}
+
+async function createOcrWorker() {
+  const { createWorker } = await import("tesseract.js");
+  return createWorker("eng");
+}
+
+async function extractImageText(arrayBuffer, options) {
+  const onProgress = options.onProgress;
+  if (onProgress) onProgress("Running OCR on image...");
+
+  const worker = await createOcrWorker();
+  try {
+    const blob = new Blob([arrayBuffer], { type: options.mimeType || "image/png" });
+    const { data } = await worker.recognize(blob);
+
+    return finalizeText(data.text || "", {
+      format: "image",
+      method: "tesseract-ocr",
+      maxChars: options.maxChars,
+      warnings: !data.text?.trim()
+        ? ["OCR found no readable text in this image."]
+        : [],
+      stats: { confidence: Math.round(data.confidence) },
+    });
+  } finally {
+    await worker.terminate();
+  }
+}
+
+async function ocrPdfPages(pdf, options) {
+  const onProgress = options.onProgress;
+  const worker = await createOcrWorker();
+
+  try {
+    const ocrPages = [];
+    const maxPages = Math.min(pdf.numPages, 20);
+
+    for (let i = 1; i <= maxPages; i++) {
+      if (onProgress) onProgress(`OCR: scanning page ${i} of ${maxPages}...`);
+
+      const page = await pdf.getPage(i);
+      const viewport = page.getViewport({ scale: 2.0 });
+
+      const canvas = new OffscreenCanvas(viewport.width, viewport.height);
+      const ctx = canvas.getContext("2d");
+      await page.render({ canvasContext: ctx, viewport }).promise;
+
+      const blob = await canvas.convertToBlob({ type: "image/png" });
+      const { data } = await worker.recognize(blob);
+      if (data.text?.trim()) {
+        ocrPages.push(`Page ${i}\n${data.text.trim()}`);
+      }
+    }
+
+    const warnings = [];
+    if (pdf.numPages > maxPages) {
+      warnings.push(`OCR was limited to the first ${maxPages} of ${pdf.numPages} pages.`);
+    }
+
+    return finalizeText(ocrPages.join("\n\n"), {
+      format: "pdf",
+      method: "pdfjs-ocr",
+      maxChars: options.maxChars,
+      warnings: ocrPages.length === 0
+        ? ["OCR could not extract text from this scanned PDF."]
+        : warnings,
+      stats: { pageCount: pdf.numPages, ocrPages: ocrPages.length },
+    });
+  } finally {
+    await worker.terminate();
+  }
 }
 
 function formatCell(cell) {
