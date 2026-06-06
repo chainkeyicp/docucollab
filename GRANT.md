@@ -28,7 +28,9 @@ DocuCollab is built around capabilities that are specific to the Internet Comput
 - Version history.
 - Per-user activity log.
 - Client-side AI-readable text extraction for TXT/MD/JSON/HTML, PDF, DOCX, CSV, and XLSX.
+- Browser-side OCR via Tesseract.js for images and scanned PDFs.
 - AI summaries, document chat, key points, and categorization over extracted text.
+- Search across document names and AI-generated summaries.
 - On-chain SHA-256 integrity hash checks.
 
 ## Known MVP Boundaries
@@ -36,7 +38,7 @@ DocuCollab is built around capabilities that are specific to the Internet Comput
 - This is an MVP, not an audited secure document vault.
 - Current upload guardrails are set to 50 MB per document and 1 MB chunks.
 - `mo:llm` accepts text input, so non-text documents are converted to extracted text before AI analysis.
-- Images and scanned PDFs require OCR and are treated as a follow-up milestone.
+- Images and scanned PDFs are OCR-processed client-side via Tesseract.js. AI vision (describing image content) depends on future ICP LLM multimodal support.
 - Integrity verification is a canister-computed SHA-256 hash checked by the client. A future milestone can add a Merkle witness flow for stronger per-document certified proofs.
 - Real-time collaborative editing is out of scope for the current MVP. The current collaboration model is sharing, access control, versioning, and audit history.
 
@@ -78,16 +80,18 @@ Verification:
 Deliverables:
 
 - Browser-side extraction for PDF, DOCX, CSV, XLSX, and plain-text formats.
-- AI summary generation on upload for extracted text.
+- Browser-side OCR for images and scanned PDFs via Tesseract.js (WebAssembly).
+- AI summary generation on upload for extracted and OCR-processed text.
 - Document chat, key points, and categorization over extracted text.
-- Clear OCR-required status for images and scanned PDFs.
+- Search across document names and AI-generated summaries.
 - No unencrypted extracted text stored in the backend canister by default.
 
 Verification:
 
 - Demo upload of PDF, DOCX, XLSX/CSV, and image files.
 - Generated summary or AI actions for readable formats.
-- OCR-required message for image-only files.
+- OCR text extraction from image uploads and scanned PDFs.
+- Search returning results by summary content, not just filename.
 
 ### Milestone 4: Collaboration Layer
 
@@ -106,4 +110,4 @@ Verification:
 
 Recommended first request: $5,000 micro grant for Milestones 1, 2, and 3.
 
-Follow-up request: $25,000 grant for Milestone 4, OCR support, and a stronger certified integrity design using Merkle witnesses.
+Follow-up request: $25,000 grant for Milestone 4, AI vision support (pending ICP LLM multimodal), and a stronger certified integrity design using Merkle witnesses.

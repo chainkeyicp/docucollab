@@ -46,7 +46,7 @@ A decentralized document management platform with encrypted on-chain storage and
 ### Core Document Management
 - **Chunked upload** -- 1MB chunks support large files on-chain
 - **File preview** -- inline preview for text, images, and PDFs
-- **Search & filter** -- search by name, sort by date/size/name
+- **Search & filter** -- search by name or AI summary content, sort by date/size/name
 - **Batch operations** -- multi-select, batch delete, batch share
 
 ### AI Summarization & Document Chat
@@ -54,7 +54,8 @@ A decentralized document management platform with encrypted on-chain storage and
 - Client-side text extraction for TXT/MD/JSON/HTML, PDF, DOCX, CSV, and XLSX before encryption
 - Default AI path uses the ICP LLM canister through `mo:llm`
 - Document chat, key point extraction, and categorization over extracted document text
-- Images and scanned PDFs are detected as OCR-required instead of being misrepresented as LLM-readable
+- Browser-side OCR via Tesseract.js for images and scanned PDFs (pending ICP LLM vision support)
+- Images and scanned PDFs without selectable text are OCR-processed client-side
 - Optional premium mode can call an external Claude API through HTTPS outcalls when configured
 - **Demonstrates ICP-unique capability**: smart contracts can orchestrate AI and external API calls without an application server
 
@@ -93,7 +94,7 @@ A decentralized document management platform with encrypted on-chain storage and
 | Frontend | SvelteKit + Tailwind CSS |
 | Auth | Internet Identity (id.ai) |
 | AI | ICP LLM canister via `mo:llm`; optional Claude HTTPS outcalls |
-| File Text Extraction | `pdfjs-dist`, `mammoth`, `read-excel-file` |
+| File Text Extraction | `pdfjs-dist`, `mammoth`, `read-excel-file`, `tesseract.js` |
 | Deployment | dfx SDK v0.25.0 |
 
 ## DocuCollab vs DocuTrack
@@ -104,7 +105,7 @@ A decentralized document management platform with encrypted on-chain storage and
 | Document Versioning | No | Yes |
 | Activity / Audit Log | No | Yes |
 | File Preview (img/pdf) | No | Yes |
-| Search & Filter | No | Yes |
+| Search & Filter | No | Yes (name + AI summary) |
 | Batch Operations | No | Yes |
 | Username-based Sharing | No | Yes |
 | Storage Quota Display | No | Yes |
