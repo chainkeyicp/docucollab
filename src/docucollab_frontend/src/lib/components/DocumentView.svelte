@@ -168,18 +168,18 @@
       }
 
       if (loadId !== activeLoadId) return;
-      cachedDecryptedData = finalData;
+      cachedDecryptedData = finalData.slice();
 
       if (doc.mimeType.startsWith("image/")) {
-        const blob = new Blob([finalData], { type: doc.mimeType });
+        const blob = new Blob([finalData.slice()], { type: doc.mimeType });
         imageUrl = URL.createObjectURL(blob);
       } else if (doc.mimeType === "application/pdf" || doc.name.toLowerCase().endsWith(".pdf")) {
-        const blob = new Blob([finalData], { type: "application/pdf" });
+        const blob = new Blob([finalData.slice()], { type: "application/pdf" });
         pdfUrl = URL.createObjectURL(blob);
       }
 
       extractionLoading = true;
-      const extraction = await extractTextFromBytes(finalData, {
+      const extraction = await extractTextFromBytes(finalData.slice(), {
         name: doc.name,
         mimeType: doc.mimeType,
       });
@@ -227,13 +227,13 @@
         }
       }
 
-      const blob = new Blob([finalData], { type: doc.mimeType });
+      const blob = new Blob([new Uint8Array(finalData)], { type: doc.mimeType });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
       a.download = doc.name;
       a.click();
-      URL.revokeObjectURL(url);
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
     } catch (e) {
       notify("Download failed: " + e.message, "error");
     } finally {
@@ -541,7 +541,7 @@
         {#if doc.summary && doc.summary.length > 0 && doc.summary[0]}
           <p class="text-sm text-gray-600 dark:text-gray-400 leading-relaxed whitespace-pre-line">{doc.summary[0]}</p>
         {:else}
-          <p class="text-sm text-gray-400 italic">No summary available for this document yet.</p>
+          <p class="text-sm text-gray-400 italic">No summary yet — it may still be generating.</p>
         {/if}
       </div>
 
