@@ -170,7 +170,7 @@
       </h1>
       <p class="text-lg text-gray-600 dark:text-gray-400 mb-8 max-w-2xl mx-auto">
         Share and collaborate on documents with end-to-end encryption.
-        Powered by the Internet Computer &mdash; fully on-chain, no servers.
+        Powered by the Internet Computer &mdash; canister-hosted core with no application server.
       </p>
       <!-- Platform Stats -->
       <div class="flex flex-wrap justify-center gap-6 mb-8 text-sm text-gray-500">
@@ -213,7 +213,7 @@
           <div class="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700">
             <div class="w-10 h-10 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center text-primary-600 font-bold mb-3">1</div>
             <h3 class="font-semibold text-gray-900 dark:text-white mb-1">Upload</h3>
-            <p class="text-sm text-gray-500 dark:text-gray-400">Drag & drop any file. It's chunked, encrypted, and stored fully on-chain in ICP canisters.</p>
+            <p class="text-sm text-gray-500 dark:text-gray-400">Drag & drop any file. It is chunked, encrypted in the browser, and stored in ICP canisters.</p>
           </div>
           <div class="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700">
             <div class="w-10 h-10 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center text-primary-600 font-bold mb-3">2</div>
@@ -236,7 +236,7 @@
             <span class="text-green-500 mt-0.5">&#10003;</span>
             <div>
               <p class="font-medium text-gray-900 dark:text-white text-sm">On-Chain AI (icp_llm)</p>
-              <p class="text-xs text-gray-500">AI inference runs fully on-chain via the LLM canister -- zero Web2 dependencies</p>
+              <p class="text-xs text-gray-500">Default summaries and chat use the ICP LLM canister; premium mode is clearly optional</p>
             </div>
           </div>
           <div class="flex items-start gap-3 bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">

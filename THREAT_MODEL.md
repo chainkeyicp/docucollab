@@ -1,0 +1,39 @@
+# DocuCollab MVP Threat Model
+
+## Security Goals
+
+- Document bytes are encrypted in the browser before upload.
+- The backend canister stores encrypted chunks, document metadata, access rules, version history, and activity entries.
+- Registered recipients receive a wrapped document key for documents shared with them.
+- Default AI actions use the ICP LLM canister through the DocuCollab AI canister.
+- OCR and text extraction run in the browser; extracted full text is not stored in the backend canister.
+- Opt-in AI summaries are encrypted in the browser with the document key before backend persistence.
+
+## Trust Boundaries
+
+- Users trust their browser session, IndexedDB key storage, and Internet Identity delegation.
+- Users trust the deployed DocuCollab canister code and its controllers.
+- Users trust the ICP LLM canister for AI processing when they use summaries, chat, key points, or categorization.
+- Optional premium AI mode is disabled unless configured by the canister admin and may send extracted text to an external provider through HTTPS outcalls.
+
+## Metadata
+
+- Document names, MIME types, sizes, timestamps, owners, sharing records, version metadata, activity entries, and SHA-256 hashes are canister metadata.
+- New AI summaries are encrypted document metadata. They are generated only after the user opts in on upload or explicitly regenerates a summary later, then stored as AES-GCM ciphertext plus nonce.
+- The legacy plaintext `summary` metadata field remains in the Candid type for existing data compatibility, but the current frontend writes encrypted summaries and the legacy plaintext setter is disabled.
+- Plain extracted document text is transient in the browser and is not persisted by the backend canister.
+
+## Current MVP Limits
+
+- This MVP is not a fully audited secure document vault.
+- Per-document integrity currently uses a canister-computed SHA-256 hash checked by the client. A future milestone should add a certified Merkle witness for `documentId/version/hash`.
+- Browser-stored private keys can be lost if the user clears browser storage and has not saved a recovery key.
+- Real-time collaborative editing is out of scope for the MVP.
+
+## Reviewer Checklist
+
+- Verify upload stores encrypted chunks, not raw file bytes.
+- Verify shared recipients can decrypt only when they have a wrapped document key.
+- Verify `getVersions`, `getDocumentHash`, and `getDocumentHashHex` reject unauthorized callers.
+- Verify OCR assets are served from the asset canister under `/vendor/tesseract`.
+- Verify AI summaries are explicitly enabled and stored as ciphertext, not plaintext metadata.

@@ -1,7 +1,7 @@
 <script>
   import { getBackend, getAI } from "$lib/services/auth";
   import { notify, isLoading } from "$lib/stores/app";
-  import { generateDocumentKey, encryptDocument, saveDocumentKey } from "$lib/services/crypto";
+  import { generateDocumentKey, encryptDocument, encryptText, saveDocumentKey } from "$lib/services/crypto";
   import { describeExtraction, extractTextFromBytes, isAiReadable } from "$lib/services/fileTextExtractors";
   import { createEventDispatcher } from "svelte";
 
@@ -12,6 +12,7 @@
   let uploadProgress = 0;
   let extractionStatus = "";
   let extractionDetail = "";
+  let generateAiSummary = false;
 
   function handleDragOver(e) {
     e.preventDefault();
@@ -44,22 +45,28 @@
     try {
       const originalBuffer = await file.arrayBuffer();
 
-      extractionStatus = "Extracting AI-readable text...";
-      extractionDetail = "";
-
       let textContent = null;
-      const extraction = await extractTextFromBytes(originalBuffer.slice(0), {
-        name: file.name,
-        mimeType: file.type,
-        onProgress: (msg) => { extractionStatus = msg; },
-      });
 
-      extractionDetail = describeExtraction(extraction);
-      if (isAiReadable(extraction)) {
-        textContent = extraction.text;
-        extractionStatus = "AI text ready";
+      if (generateAiSummary) {
+        extractionStatus = "Extracting AI-readable text...";
+        extractionDetail = "";
+
+        const extraction = await extractTextFromBytes(originalBuffer.slice(0), {
+          name: file.name,
+          mimeType: file.type,
+          onProgress: (msg) => { extractionStatus = msg; },
+        });
+
+        extractionDetail = describeExtraction(extraction);
+        if (isAiReadable(extraction)) {
+          textContent = extraction.text;
+          extractionStatus = "AI text ready";
+        } else {
+          extractionStatus = "AI text unavailable";
+        }
       } else {
-        extractionStatus = "AI text unavailable";
+        extractionStatus = "Preparing encrypted upload...";
+        extractionDetail = "AI summary skipped. No summary will be stored.";
       }
 
       await tickOnce();
@@ -121,7 +128,7 @@
 
       // Trigger AI summary using text extracted before encryption.
       if (textContent) {
-        triggerSummary(docId, textContent);
+        triggerSummary(docId, textContent, aesKey);
       }
     } catch (e) {
       console.error("Upload error:", e);
@@ -134,7 +141,7 @@
     }
   }
 
-  async function triggerSummary(docId, text) {
+  async function triggerSummary(docId, text, aesKey) {
     try {
       const ai = getAI();
       const backend = getBackend();
@@ -142,7 +149,9 @@
 
       const result = await ai.summarizeText(text);
       if ("ok" in result) {
-        await backend.setSummary(docId, result.ok);
+        const encryptedSummary = await encryptText(result.ok, aesKey);
+        const saveResult = await backend.setEncryptedSummary(docId, encryptedSummary.encrypted, encryptedSummary.iv);
+        if ("err" in saveResult) throw new Error(saveResult.err);
         dispatch("uploaded"); // refresh
         notify("AI summary generated!", "success");
       }
@@ -189,14 +198,23 @@
       </div>
     </div>
   {:else}
-    <label for="file-input" class="cursor-pointer space-y-3">
-      <svg class="w-10 h-10 mx-auto text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-      </svg>
-      <p class="text-sm text-gray-600 dark:text-gray-400">
-        <span class="font-semibold text-primary-600">Click to upload</span> or drag and drop
-      </p>
-      <p class="text-xs text-gray-500">Any file type supported</p>
-    </label>
+    <div class="space-y-4">
+      <label for="file-input" class="block cursor-pointer space-y-3">
+        <svg class="w-10 h-10 mx-auto text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+        </svg>
+        <p class="text-sm text-gray-600 dark:text-gray-400">
+          <span class="font-semibold text-primary-600">Click to upload</span> or drag and drop
+        </p>
+        <p class="text-xs text-gray-500">Any file type supported</p>
+      </label>
+      <label for="ai-summary-toggle" class="mt-4 flex items-start gap-2 text-left max-w-sm mx-auto cursor-pointer">
+        <input id="ai-summary-toggle" type="checkbox" bind:checked={generateAiSummary}
+          class="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
+        <span class="text-xs text-gray-500">
+          Generate AI summary after upload. The encrypted document stays private; the summary is stored encrypted too.
+        </span>
+      </label>
+    </div>
   {/if}
 </div>

@@ -72,6 +72,35 @@ export async function decryptDocument(encryptedData, aesKey) {
   );
 }
 
+export async function encryptText(plainText, aesKey) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encoded = new TextEncoder().encode(plainText);
+  const encrypted = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    aesKey,
+    encoded
+  );
+  return {
+    encrypted: new Uint8Array(encrypted),
+    iv,
+  };
+}
+
+export async function decryptText(encryptedBytes, ivBytes, aesKey) {
+  const encrypted = encryptedBytes instanceof Uint8Array
+    ? encryptedBytes
+    : new Uint8Array(encryptedBytes);
+  const iv = ivBytes instanceof Uint8Array
+    ? ivBytes
+    : new Uint8Array(ivBytes);
+  const decrypted = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv },
+    aesKey,
+    encrypted
+  );
+  return new TextDecoder().decode(decrypted);
+}
+
 export async function exportKey(aesKey) {
   return new Uint8Array(await crypto.subtle.exportKey("raw", aesKey));
 }

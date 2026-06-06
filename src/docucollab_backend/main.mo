@@ -36,6 +36,13 @@ actor DocuCollab {
     certifiedHash : ?Blob;
   };
 
+  public type EncryptedSummary = {
+    docId : DocumentId;
+    ciphertext : Blob;
+    iv : Blob;
+    updatedAt : Int;
+  };
+
   public type VersionInfo = {
     version : ?Nat;
     size : Nat;
@@ -94,6 +101,7 @@ actor DocuCollab {
   stable var stableUserDocs : [(Principal, [DocumentId])] = [];
   stable var stableActivities : [ActivityEntry] = [];
   stable var stableVersions : [(DocumentId, [VersionInfo])] = [];
+  stable var stableEncryptedSummaries : [(DocumentId, EncryptedSummary)] = [];
   stable var adminPrincipal : ?Principal = null;
 
   var documents = HashMap.HashMap<DocumentId, DocumentMeta>(16, Nat.equal, func(n : Nat) : Nat32 { Nat32.fromNat(n % 2147483647) });
@@ -103,6 +111,7 @@ actor DocuCollab {
   var userDocs = HashMap.HashMap<Principal, Buffer.Buffer<DocumentId>>(16, Principal.equal, Principal.hash);
   var activities = Buffer.Buffer<ActivityEntry>(32);
   var versionHistory = HashMap.HashMap<DocumentId, Buffer.Buffer<VersionInfo>>(16, Nat.equal, func(n : Nat) : Nat32 { Nat32.fromNat(n % 2147483647) });
+  var encryptedSummaries = HashMap.HashMap<DocumentId, EncryptedSummary>(16, Nat.equal, func(n : Nat) : Nat32 { Nat32.fromNat(n % 2147483647) });
 
   let MAX_DOCUMENT_SIZE : Nat = 50 * 1024 * 1024;
   let MAX_CHUNK_SIZE : Nat = 1_100_000;
@@ -125,6 +134,7 @@ actor DocuCollab {
       Iter.toArray(versionHistory.entries()),
       func(entry) { (entry.0, Buffer.toArray(entry.1)) }
     );
+    stableEncryptedSummaries := Iter.toArray(encryptedSummaries.entries());
   };
 
   system func postupgrade() {
@@ -143,6 +153,7 @@ actor DocuCollab {
       for (v in versions.vals()) { buf.add(v) };
       versionHistory.put(docId, buf);
     };
+    for ((k, v) in stableEncryptedSummaries.vals()) { encryptedSummaries.put(k, v) };
     stableDocuments := [];
     stableChunks := [];
     stableUsers := [];
@@ -150,6 +161,7 @@ actor DocuCollab {
     stableUserDocs := [];
     stableActivities := [];
     stableVersions := [];
+    stableEncryptedSummaries := [];
   };
 
   // ===== HELPERS =====
@@ -466,6 +478,7 @@ actor DocuCollab {
           case null {};
         };
         logActivity(#delete, caller, docId, doc.name, null);
+        encryptedSummaries.delete(docId);
         documents.delete(docId);
         #ok()
       };
@@ -537,11 +550,33 @@ actor DocuCollab {
 
   // ===== AI SUMMARY =====
 
-  public shared(msg) func setSummary(docId : DocumentId, summary : Text) : async Result.Result<(), Text> {
+  public shared(msg) func setSummary(docId : DocumentId, _summary : Text) : async Result.Result<(), Text> {
     switch (documents.get(docId)) {
       case (?doc) {
         if (not Principal.equal(doc.owner, msg.caller)) {
           return #err("Only the owner can set summary");
+        };
+        #err("Plaintext summaries are deprecated; use setEncryptedSummary")
+      };
+      case null #err("Document not found");
+    };
+  };
+
+  public shared(msg) func setEncryptedSummary(docId : DocumentId, ciphertext : Blob, iv : Blob) : async Result.Result<(), Text> {
+    switch (documents.get(docId)) {
+      case (?doc) {
+        if (not Principal.equal(doc.owner, msg.caller)) {
+          return #err("Only the owner can set summary");
+        };
+        if (ciphertext.size() == 0 or iv.size() == 0) {
+          return #err("Encrypted summary payload is required");
+        };
+        let now = Time.now();
+        let summary : EncryptedSummary = {
+          docId = docId;
+          ciphertext = ciphertext;
+          iv = iv;
+          updatedAt = now;
         };
         let updated : DocumentMeta = {
           id = doc.id;
@@ -550,18 +585,29 @@ actor DocuCollab {
           size = doc.size;
           owner = doc.owner;
           createdAt = doc.createdAt;
-          updatedAt = Time.now();
+          updatedAt = now;
           isEncrypted = doc.isEncrypted;
-          summary = ?summary;
+          summary = null;
           totalChunks = doc.totalChunks;
           version = doc.version;
           certifiedHash = doc.certifiedHash;
         };
+        encryptedSummaries.put(docId, summary);
         documents.put(docId, updated);
         logActivity(#summary, msg.caller, docId, doc.name, null);
         #ok()
       };
       case null #err("Document not found");
+    };
+  };
+
+  public query(msg) func getEncryptedSummary(docId : DocumentId) : async Result.Result<EncryptedSummary, Text> {
+    if (not hasAccess(docId, msg.caller)) {
+      return #err("Access denied");
+    };
+    switch (encryptedSummaries.get(docId)) {
+      case (?summary) #ok(summary);
+      case null #err("Summary not found");
     };
   };
 
@@ -620,6 +666,7 @@ actor DocuCollab {
           chunks.delete(chunkKey(docId, i));
           i += 1;
         };
+        encryptedSummaries.delete(docId);
         documents.put(docId, updated);
         logActivity(#upload, caller, docId, doc.name, null);
         #ok(newVersion)
@@ -628,7 +675,10 @@ actor DocuCollab {
     };
   };
 
-  public query func getVersions(docId : DocumentId) : async [VersionInfo] {
+  public query(msg) func getVersions(docId : DocumentId) : async [VersionInfo] {
+    if (not hasAccess(docId, msg.caller)) {
+      return [];
+    };
     switch (versionHistory.get(docId)) {
       case (?buf) Buffer.toArray(buf);
       case null [];
@@ -680,7 +730,10 @@ actor DocuCollab {
     };
   };
 
-  public query func getDocumentHash(docId : DocumentId) : async Result.Result<{ hash : Blob; certificate : ?Blob }, Text> {
+  public query(msg) func getDocumentHash(docId : DocumentId) : async Result.Result<{ hash : Blob; certificate : ?Blob }, Text> {
+    if (not hasAccess(docId, msg.caller)) {
+      return #err("Access denied");
+    };
     switch (documents.get(docId)) {
       case (?doc) {
         switch (doc.certifiedHash) {
@@ -704,7 +757,10 @@ actor DocuCollab {
     result
   };
 
-  public query func getDocumentHashHex(docId : DocumentId) : async Result.Result<Text, Text> {
+  public query(msg) func getDocumentHashHex(docId : DocumentId) : async Result.Result<Text, Text> {
+    if (not hasAccess(docId, msg.caller)) {
+      return #err("Access denied");
+    };
     switch (documents.get(docId)) {
       case (?doc) {
         switch (doc.certifiedHash) {

@@ -12,6 +12,8 @@ Result: passes.
 
 Known warning: `Cycles.add` is deprecated in the current Motoko compiler. The replacement `with cycles` syntax is recommended by the warning, but this project currently targets `dfx 0.25.0`, whose `moc` rejected that syntax during testing. The project keeps `Cycles.add` for build compatibility.
 
+Confirmed again after adding access checks to `getVersions`, `getDocumentHash`, and `getDocumentHashHex`.
+
 ```bash
 cd src/docucollab_frontend
 npx svelte-check --tsconfig ./tsconfig.json
@@ -26,6 +28,10 @@ npm run build
 Result: passes.
 
 Known warning: Vite/SvelteKit emits dependency export warnings related to the installed SvelteKit/Svelte combination. These warnings were present before the grant-readiness changes and do not fail the production build.
+
+The production build copies self-hosted OCR assets into `dist/vendor/tesseract`, including the Tesseract worker, core WASM loaders, and English/Bulgarian traineddata files.
+
+The frontend `postbuild` script updates `dist/.ic-assets.json5` with the SHA-256 hash of SvelteKit's inline bootstrap script so the CSP can allow that script without enabling arbitrary inline scripts.
 
 ```bash
 node --check src/docucollab_frontend/src/lib/services/fileTextExtractors.js
@@ -46,6 +52,25 @@ npm audit --workspace src/docucollab_frontend --omit=dev --json
 
 Result: passes with 0 production vulnerabilities.
 
+```bash
+cd src/docucollab_frontend/dist
+python3 -m http.server 4179
+curl -fsI http://127.0.0.1:4179/
+curl -fsI http://127.0.0.1:4179/vendor/tesseract/worker.min.js
+curl -fsI http://127.0.0.1:4179/vendor/tesseract/core/tesseract-core-simd-lstm.wasm.js
+curl -fsI http://127.0.0.1:4179/vendor/tesseract/lang/eng.traineddata.gz
+curl -fsI http://127.0.0.1:4179/vendor/tesseract/lang/bul.traineddata.gz
+```
+
+Result: passes. Landing page and OCR runtime/language assets return HTTP 200 from the static build output.
+
+```powershell
+# Live deployment check
+# Fetch /, compute the inline bootstrap hash, and compare it with the Content-Security-Policy header.
+```
+
+Result: passes after the 2026-06-06 CSP fix. The live CSP includes the hash of the live SvelteKit inline bootstrap script.
+
 ## Browser Smoke Test
 
 Local URL: `http://127.0.0.1:5178/`
@@ -57,3 +82,11 @@ Checked:
 - Updated labels `On-Chain Hash` and `ICP Native` are visible.
 - Old claims `2 GB` and `Certified Integrity` are not visible.
 - Browser console has 0 errors on initial load.
+
+## Manual Grant Reviewer Smoke Tests To Record
+
+- Upload a text PDF with AI summary enabled; verify an encrypted summary is stored and displays after local decryption.
+- Upload an image containing English and Bulgarian text with AI summary enabled; verify OCR-derived summary displays after local decryption.
+- Upload a scanned PDF; verify OCR extracts text from the first pages and reports the page limit if applicable.
+- Upload a document with AI summary disabled; verify no summary metadata is added.
+- Share an encrypted document between two Internet Identity users; verify recipient decrypts, opens, and downloads it.

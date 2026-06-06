@@ -1,7 +1,7 @@
 <script>
   import { getBackend, getAI } from "$lib/services/auth";
   import { notify, isLoading } from "$lib/stores/app";
-  import { getDocumentKey, saveDocumentKey, encryptDocument, decryptDocument, decryptKeyWithPrivateKey, getPrivateKey } from "$lib/services/crypto";
+  import { getDocumentKey, saveDocumentKey, encryptDocument, decryptDocument, encryptText, decryptText, decryptKeyWithPrivateKey, getPrivateKey } from "$lib/services/crypto";
   import { describeExtraction, extractTextFromBytes, isAiReadable } from "$lib/services/fileTextExtractors";
   import ShareModal from "./ShareModal.svelte";
   import { createEventDispatcher, onDestroy } from "svelte";
@@ -21,6 +21,9 @@
   let versions = [];
   let activeLoadId = 0;
   let cachedDecryptedData = null;
+  let decryptedSummary = null;
+  let hasEncryptedSummary = false;
+  let summaryLoading = false;
 
   // AI Chat
   let chatMessages = [];
@@ -35,6 +38,8 @@
   let verifying = false;
 
   $: if (doc) loadDocument();
+  $: legacySummary = doc?.summary && doc.summary.length > 0 && doc.summary[0] ? doc.summary[0] : null;
+  $: displayedSummary = decryptedSummary || legacySummary;
 
   onDestroy(() => {
     if (imageUrl) URL.revokeObjectURL(imageUrl);
@@ -81,12 +86,52 @@
     extractionInfo = null;
     extractionLoading = false;
     cachedDecryptedData = null;
+    decryptedSummary = null;
+    hasEncryptedSummary = false;
+    summaryLoading = false;
     imageUrl = null;
     pdfUrl = null;
     docHashHex = null;
     keyPoints = null;
     category = null;
     chatMessages = [];
+  }
+
+  async function loadEncryptedSummary(candidateAccessList = accessList) {
+    const backend = getBackend();
+    if (!backend || !doc) return;
+
+    summaryLoading = true;
+    decryptedSummary = null;
+    hasEncryptedSummary = false;
+    try {
+      const result = await backend.getEncryptedSummary(doc.id);
+      if ("ok" in result) {
+        hasEncryptedSummary = true;
+        const aesKey = await resolveDocumentKey(candidateAccessList);
+        if (!aesKey) return;
+        decryptedSummary = await decryptText(result.ok.ciphertext, result.ok.iv, aesKey);
+      }
+    } catch (e) {
+      console.warn("Encrypted summary warning:", e);
+    } finally {
+      summaryLoading = false;
+    }
+  }
+
+  async function saveEncryptedSummaryText(summaryText, aesKey = null) {
+    const backend = getBackend();
+    if (!backend) throw new Error("Backend not available");
+    const key = aesKey || await resolveDocumentKey(accessList);
+    if (!key) throw new Error("Document encryption key is not available");
+
+    const encryptedSummary = await encryptText(summaryText, key);
+    const saveResult = await backend.setEncryptedSummary(doc.id, encryptedSummary.encrypted, encryptedSummary.iv);
+    if ("err" in saveResult) throw new Error(saveResult.err);
+
+    decryptedSummary = summaryText;
+    hasEncryptedSummary = true;
+    doc.summary = [];
   }
 
   function applyExtraction(extraction) {
@@ -121,6 +166,8 @@
         }
         usernames = usernames; // trigger reactivity
       }
+
+      await loadEncryptedSummary(accessList);
 
       // Load version history
       try {
@@ -264,6 +311,7 @@
       const CHUNK_SIZE = 1024 * 1024;
       let uploadData = new Uint8Array(arrayBuffer);
       let textContent = null;
+      let documentKey = null;
 
       const extraction = await extractTextFromBytes(arrayBuffer.slice(0), {
         name: file.name,
@@ -273,12 +321,12 @@
       if (isAiReadable(extraction)) textContent = extraction.text;
 
       if (doc.isEncrypted) {
-        const aesKey = await resolveDocumentKey(accessList);
-        if (!aesKey) {
+        documentKey = await resolveDocumentKey(accessList);
+        if (!documentKey) {
           notify("Cannot update encrypted document: owner encryption key is not available", "error");
           return;
         }
-        uploadData = await encryptDocument(arrayBuffer, aesKey);
+        uploadData = await encryptDocument(arrayBuffer, documentKey);
       }
 
       const totalChunks = Math.ceil(uploadData.byteLength / CHUNK_SIZE);
@@ -306,14 +354,15 @@
         console.warn("Finalize warning:", e);
       }
 
+      const shouldRefreshSummary = textContent && displayedSummary;
       let summaryUpdated = false;
-      if (textContent) {
+      if (shouldRefreshSummary) {
         try {
           const ai = getAI();
           if (ai) {
             const summary = await ai.summarizeText(textContent);
             if ("ok" in summary) {
-              await backend.setSummary(doc.id, summary.ok);
+              await saveEncryptedSummaryText(summary.ok, documentKey);
               summaryUpdated = true;
             }
           }
@@ -325,7 +374,7 @@
       notify(
         summaryUpdated
           ? `Version ${Number(result.ok)} uploaded and AI summary refreshed.`
-          : `Version ${Number(result.ok)} uploaded. ${textContent ? "AI summary refresh skipped." : extractionDetail}`,
+          : `Version ${Number(result.ok)} uploaded. ${textContent ? "No encrypted summary was added." : extractionDetail}`,
         summaryUpdated || textContent ? "success" : "info"
       );
       dispatch("close");
@@ -441,8 +490,7 @@
         ? await ai.summarizeTextPremium(aiDocumentContent)
         : await ai.summarizeOnChain(aiDocumentContent);
       if ("ok" in result) {
-        await backend.setSummary(doc.id, result.ok);
-        doc.summary = [result.ok];
+        await saveEncryptedSummaryText(result.ok);
         notify("Summary regenerated!", "success");
       } else {
         notify("Failed: " + result.err, "error");
@@ -547,8 +595,12 @@
             </button>
           {/if}
         </div>
-        {#if doc.summary && doc.summary.length > 0 && doc.summary[0]}
-          <p class="text-sm text-gray-600 dark:text-gray-400 leading-relaxed whitespace-pre-line">{doc.summary[0]}</p>
+        {#if displayedSummary}
+          <p class="text-sm text-gray-600 dark:text-gray-400 leading-relaxed whitespace-pre-line">{displayedSummary}</p>
+        {:else if summaryLoading}
+          <p class="text-sm text-gray-400 italic">Decrypting summary...</p>
+        {:else if hasEncryptedSummary}
+          <p class="text-sm text-gray-400 italic">Encrypted summary available, but the document key is not available in this browser.</p>
         {:else}
           <p class="text-sm text-gray-400 italic">No summary yet — it may still be generating.</p>
         {/if}

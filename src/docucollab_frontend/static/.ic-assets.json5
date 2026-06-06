@@ -3,9 +3,10 @@
     "match": "**/*",
     "security_policy": "standard",
     "headers": {
-      "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline' https://cdn.jsdelivr.net; worker-src 'self' blob:; connect-src 'self' http://localhost:* https://icp0.io https://*.icp0.io https://icp-api.io https://cdn.jsdelivr.net; img-src 'self' data: blob:; style-src * 'unsafe-inline'; style-src-elem * 'unsafe-inline'; font-src *; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; frame-src 'self' https://id.ai blob:; form-action 'self'; upgrade-insecure-requests;",
+      // Tesseract's local Emscripten/WASM loader needs eval permissions in some browsers.
+      // Third-party script/connect sources are intentionally not allowed.
+      "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval' __INLINE_SCRIPT_HASHES__; worker-src 'self' blob:; connect-src 'self' http://localhost:* https://icp0.io https://*.icp0.io https://icp-api.io; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; style-src-elem 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; frame-src 'self' https://id.ai blob:; form-action 'self'; upgrade-insecure-requests;",
       "Permissions-Policy": "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
-    },
-    "disable_security_policy_warning": true
+    }
   }
 ]

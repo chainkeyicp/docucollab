@@ -2,7 +2,7 @@
 
 **Decentralized Document Sharing & Collaboration on the Internet Computer**
 
-A decentralized document management platform with encrypted on-chain storage and AI-powered document assistance, built on ICP. No application servers, no external database -- the frontend, backend state, access control, and AI orchestration run in canisters.
+A decentralized document management platform with encrypted on-chain storage and AI-powered document assistance, built on ICP. The core app has no application server and no external database: the frontend, backend state, access control, and default AI orchestration run in canisters. Premium AI outcalls are optional and explicitly configured.
 
 **Live:** [https://ppfr3-2aaaa-aaaau-agw6q-cai.icp0.io/](https://ppfr3-2aaaa-aaaau-agw6q-cai.icp0.io/)
 
@@ -46,16 +46,17 @@ A decentralized document management platform with encrypted on-chain storage and
 ### Core Document Management
 - **Chunked upload** -- 1MB chunks support large files on-chain
 - **File preview** -- inline preview for text, images, and PDFs
-- **Search & filter** -- search by name or AI summary content, sort by date/size/name
+- **Search & filter** -- search by name or locally decrypted AI summary content, sort by date/size/name
 - **Batch operations** -- multi-select, batch delete, batch share
 
 ### AI Summarization & Document Chat
-- Automatic AI summary generation for AI-readable documents on upload
+- Opt-in AI summary generation for AI-readable documents on upload
+- AI summaries are encrypted in the browser with the document key before canister storage
 - Client-side text extraction for TXT/MD/JSON/HTML, PDF, DOCX, CSV, and XLSX before encryption
 - Default AI path uses the ICP LLM canister through `mo:llm`
 - Document chat, key point extraction, and categorization over extracted document text
-- Browser-side OCR via Tesseract.js for images and scanned PDFs (pending ICP LLM vision support)
-- Images and scanned PDFs without selectable text are OCR-processed client-side
+- Browser-side OCR via Tesseract.js for images and scanned PDFs, with English and Bulgarian OCR assets served from the frontend asset canister
+- Images and scanned PDFs without selectable text can be OCR-processed client-side
 - Optional premium mode can call an external Claude API through HTTPS outcalls when configured
 - **Demonstrates ICP-unique capability**: smart contracts can orchestrate AI and external API calls without an application server
 
@@ -72,7 +73,7 @@ A decentralized document management platform with encrypted on-chain storage and
 
 ### Activity Log (Audit Trail)
 - Every action recorded: upload, share, revoke, delete, AI summary
-- Tamper-proof -- stored in canister stable memory
+- Append-only through the app interface and stored in canister stable memory
 - Timeline view with icons and timestamps
 - Per-user activity filtering
 
@@ -86,6 +87,8 @@ A decentralized document management platform with encrypted on-chain storage and
 - Principal-based identity with username registration
 - 24-hour idle timeout, 7-day delegation
 
+See [THREAT_MODEL.md](THREAT_MODEL.md) for the MVP privacy boundaries, metadata model, and reviewer security checklist.
+
 ## Tech Stack
 
 | Layer | Technology |
@@ -94,7 +97,7 @@ A decentralized document management platform with encrypted on-chain storage and
 | Frontend | SvelteKit + Tailwind CSS |
 | Auth | Internet Identity (id.ai) |
 | AI | ICP LLM canister via `mo:llm`; optional Claude HTTPS outcalls |
-| File Text Extraction | `pdfjs-dist`, `mammoth`, `read-excel-file`, `tesseract.js` |
+| File Text Extraction | `pdfjs-dist`, `mammoth`, `read-excel-file`, `tesseract.js` with local `eng`/`bul` traineddata assets |
 | Deployment | dfx SDK v0.25.0 |
 
 ## DocuCollab vs DocuTrack
@@ -105,7 +108,7 @@ A decentralized document management platform with encrypted on-chain storage and
 | Document Versioning | No | Yes |
 | Activity / Audit Log | No | Yes |
 | File Preview (img/pdf) | No | Yes |
-| Search & Filter | No | Yes (name + AI summary) |
+| Search & Filter | No | Yes (name + locally decrypted AI summary) |
 | Batch Operations | No | Yes |
 | Username-based Sharing | No | Yes |
 | Storage Quota Display | No | Yes |
@@ -183,7 +186,7 @@ docucollab/
 3. **Certified Assets** -- Frontend served with cryptographic verification
 4. **Stable Memory** -- Data persists across canister upgrades
 5. **On-chain SHA-256 integrity checks** -- document chunk hashes are computed in the backend canister and can be verified by the client
-6. **Client-side extraction before encrypted storage** -- AI-readable text is derived in the browser so plaintext document text is not stored unencrypted in the backend canister
+6. **Client-side extraction before encrypted storage** -- AI-readable text is derived in the browser; plaintext extracted text is not stored in the backend canister, and opt-in summaries are encrypted with the document key before storage
 7. **Optional HTTPS Outcalls** -- premium AI mode can call an external API directly from a canister when configured
 
 ## License

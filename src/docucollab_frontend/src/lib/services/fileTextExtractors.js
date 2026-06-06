@@ -1,6 +1,8 @@
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 const MAX_EXTRACTED_CHARS = 90_000;
+const OCR_LANGUAGES = "eng+bul";
+const OCR_ASSET_BASE = "/vendor/tesseract";
 
 const TEXT_EXTENSIONS = new Set([
   "txt",
@@ -206,7 +208,13 @@ async function extractXlsxText(arrayBuffer, options) {
 
 async function createOcrWorker() {
   const { createWorker } = await import("tesseract.js");
-  return createWorker("eng");
+  return createWorker(OCR_LANGUAGES, 1, {
+    workerPath: `${OCR_ASSET_BASE}/worker.min.js`,
+    corePath: `${OCR_ASSET_BASE}/core`,
+    langPath: `${OCR_ASSET_BASE}/lang`,
+    workerBlobURL: false,
+    gzip: true,
+  });
 }
 
 async function extractImageText(arrayBuffer, options) {
@@ -215,8 +223,10 @@ async function extractImageText(arrayBuffer, options) {
 
   const worker = await createOcrWorker();
   try {
-    const blob = new Blob([arrayBuffer], { type: options.mimeType || "image/png" });
-    const { data } = await worker.recognize(blob);
+    const mimeType = options.mimeType || "image/png";
+    const ext = extensionOf(options.name) || "png";
+    const file = new File([arrayBuffer], `input.${ext}`, { type: mimeType });
+    const { data } = await worker.recognize(file);
 
     return finalizeText(data.text || "", {
       format: "image",
@@ -246,12 +256,13 @@ async function ocrPdfPages(pdf, options) {
       const page = await pdf.getPage(i);
       const viewport = page.getViewport({ scale: 2.0 });
 
-      const canvas = new OffscreenCanvas(viewport.width, viewport.height);
+      const canvas = createCanvas(viewport.width, viewport.height);
       const ctx = canvas.getContext("2d");
       await page.render({ canvasContext: ctx, viewport }).promise;
 
-      const blob = await canvas.convertToBlob({ type: "image/png" });
-      const { data } = await worker.recognize(blob);
+      const blob = await canvasToBlob(canvas);
+      const file = new File([blob], `page-${i}.png`, { type: "image/png" });
+      const { data } = await worker.recognize(file);
       if (data.text?.trim()) {
         ocrPages.push(`Page ${i}\n${data.text.trim()}`);
       }
@@ -274,6 +285,30 @@ async function ocrPdfPages(pdf, options) {
   } finally {
     await worker.terminate();
   }
+}
+
+function createCanvas(width, height) {
+  if (typeof OffscreenCanvas !== "undefined") {
+    return new OffscreenCanvas(width, height);
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  return canvas;
+}
+
+function canvasToBlob(canvas) {
+  if ("convertToBlob" in canvas) {
+    return canvas.convertToBlob({ type: "image/png" });
+  }
+
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error("Could not render PDF page for OCR"));
+    }, "image/png");
+  });
 }
 
 function formatCell(cell) {

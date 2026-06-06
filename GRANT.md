@@ -2,7 +2,7 @@
 
 ## Summary
 
-DocuCollab is an ICP-native document sharing and collaboration MVP. It stores encrypted document chunks in a Motoko backend canister, serves the frontend through an asset canister, authenticates users with Internet Identity, and uses a dedicated AI canister for document summaries, chat, key point extraction, and categorization.
+DocuCollab is an ICP-native document sharing and collaboration MVP. It stores encrypted document chunks in a Motoko backend canister, serves the frontend through an asset canister, authenticates users with Internet Identity, and uses a dedicated AI canister for opt-in document summaries, chat, key point extraction, and categorization.
 
 Live demo: https://ppfr3-2aaaa-aaaau-agw6q-cai.icp0.io/
 
@@ -28,9 +28,10 @@ DocuCollab is built around capabilities that are specific to the Internet Comput
 - Version history.
 - Per-user activity log.
 - Client-side AI-readable text extraction for TXT/MD/JSON/HTML, PDF, DOCX, CSV, and XLSX.
-- Browser-side OCR via Tesseract.js for images and scanned PDFs.
-- AI summaries, document chat, key points, and categorization over extracted text.
-- Search across document names and AI-generated summaries.
+- Browser-side OCR via Tesseract.js for images and scanned PDFs, with English and Bulgarian OCR runtime/language assets served from the frontend asset canister.
+- Opt-in AI summaries, document chat, key points, and categorization over extracted text.
+- AI summaries are encrypted in the browser with the document key before canister storage.
+- Search across document names and locally decrypted AI-generated summaries.
 - On-chain SHA-256 integrity hash checks.
 
 ## Known MVP Boundaries
@@ -38,9 +39,12 @@ DocuCollab is built around capabilities that are specific to the Internet Comput
 - This is an MVP, not an audited secure document vault.
 - Current upload guardrails are set to 50 MB per document and 1 MB chunks.
 - `mo:llm` accepts text input, so non-text documents are converted to extracted text before AI analysis.
-- Images and scanned PDFs are OCR-processed client-side via Tesseract.js. AI vision (describing image content) depends on future ICP LLM multimodal support.
+- Images and scanned PDFs are OCR-processed client-side via Tesseract.js. This extracts visible text; AI vision for describing non-text image content depends on future ICP LLM multimodal support.
+- Plain extracted document text is transient in the browser and is not stored in the backend canister. If a user opts into AI summaries, the generated summary is encrypted locally with the document key before canister storage. The canister stores summary ciphertext and nonce; owners and shared recipients can decrypt summaries only when they have the document key.
 - Integrity verification is a canister-computed SHA-256 hash checked by the client. A future milestone can add a Merkle witness flow for stronger per-document certified proofs.
 - Real-time collaborative editing is out of scope for the current MVP. The current collaboration model is sharing, access control, versioning, and audit history.
+
+The repository includes `THREAT_MODEL.md` with the MVP privacy boundaries, metadata model, and reviewer checklist.
 
 ## Proposed Grant Scope
 
@@ -80,18 +84,18 @@ Verification:
 Deliverables:
 
 - Browser-side extraction for PDF, DOCX, CSV, XLSX, and plain-text formats.
-- Browser-side OCR for images and scanned PDFs via Tesseract.js (WebAssembly).
-- AI summary generation on upload for extracted and OCR-processed text.
+- Browser-side OCR for images and scanned PDFs via self-hosted Tesseract.js WebAssembly assets.
+- Explicit opt-in AI summary generation on upload for extracted and OCR-processed text.
 - Document chat, key points, and categorization over extracted text.
-- Search across document names and AI-generated summaries.
-- No unencrypted extracted text stored in the backend canister by default.
+- Search across document names and locally decrypted AI-generated summaries.
+- No unencrypted extracted text or new plaintext summaries stored in the backend canister; generated summaries require user opt-in and are stored encrypted.
 
 Verification:
 
 - Demo upload of PDF, DOCX, XLSX/CSV, and image files.
 - Generated summary or AI actions for readable formats.
 - OCR text extraction from image uploads and scanned PDFs.
-- Search returning results by summary content, not just filename.
+- Search returning results by decrypted summary content, not just filename.
 
 ### Milestone 4: Collaboration Layer
 

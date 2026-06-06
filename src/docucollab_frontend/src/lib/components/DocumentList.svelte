@@ -1,20 +1,33 @@
 <script>
-  import { getBackend } from "$lib/services/auth";
+  import { getBackend, getAI } from "$lib/services/auth";
   import { documents, notify, isLoading } from "$lib/stores/app";
+  import { getDocumentKey, decryptText } from "$lib/services/crypto";
   import { createEventDispatcher } from "svelte";
 
   const dispatch = createEventDispatcher();
+  const AI_SEARCH_MAX_DOCS = 40;
+  const AI_SEARCH_SUMMARY_CHARS = 220;
 
   let searchQuery = "";
   let sortBy = "date";
   let selectedIds = new Set();
   let selectMode = false;
+  let aiSearching = false;
+  let aiMatchedIds = null;
+  let decryptedSummaries = {};
+  let loadedSummaryIds = new Set();
+  let summaryLoadToken = 0;
+
+  $: loadSummariesForDocs($documents);
 
   $: filteredDocs = $documents
     .filter(d => {
+      if (aiMatchedIds !== null) return aiMatchedIds.has(Number(d.id));
       const q = searchQuery.toLowerCase();
+      if (!q) return true;
       if (d.name.toLowerCase().includes(q)) return true;
-      if (d.summary?.length > 0 && d.summary[0].toLowerCase().includes(q)) return true;
+      const summary = summaryFor(d);
+      if (summary && summary.toLowerCase().includes(q)) return true;
       return false;
     })
     .sort((a, b) => {
@@ -22,6 +35,137 @@
       if (sortBy === "size") return Number(b.size) - Number(a.size);
       return Number(b.updatedAt) - Number(a.updatedAt);
     });
+
+  async function aiSearch() {
+    if (!searchQuery.trim() || aiSearching) return;
+    const ai = getAI();
+    if (!ai) { notify("AI not available", "error"); return; }
+
+    const docsWithSummary = $documents
+      .filter(d => summaryFor(d))
+      .sort((a, b) => Number(b.updatedAt) - Number(a.updatedAt));
+    if (docsWithSummary.length === 0) {
+      notify("No documents with AI summaries to search", "info");
+      return;
+    }
+
+    aiSearching = true;
+    try {
+      const catalogDocs = docsWithSummary.slice(0, AI_SEARCH_MAX_DOCS);
+      const knownIds = new Set(catalogDocs.map(d => Number(d.id)));
+      const catalog = catalogDocs.map(d =>
+        JSON.stringify({
+          id: Number(d.id),
+          name: d.name,
+          summary: summaryFor(d).slice(0, AI_SEARCH_SUMMARY_CHARS),
+        })
+      ).join("\n");
+
+      const query = searchQuery.trim();
+      const result = await ai.chatWithDocument(
+        catalog,
+        `Find documents matching this query: ${JSON.stringify(query)}. Return JSON only, in this exact shape: {"ids":[1,2]}. Use only IDs present in the catalog. Return {"ids":[]} if none match.`
+      );
+
+      if ("ok" in result) {
+        aiMatchedIds = parseAiSearchIds(result.ok, knownIds);
+        const cappedNote = docsWithSummary.length > catalogDocs.length
+          ? ` Searched the ${catalogDocs.length} most recent summarized documents.`
+          : "";
+        notify(
+          aiMatchedIds.size > 0
+            ? `AI found ${aiMatchedIds.size} matching document${aiMatchedIds.size !== 1 ? 's' : ''}.${cappedNote}`
+            : `AI found no matching documents.${cappedNote}`,
+          aiMatchedIds.size > 0 ? "success" : "info"
+        );
+      } else {
+        notify("AI search failed: " + result.err, "error");
+      }
+    } catch (e) {
+      notify("AI search error: " + e.message, "error");
+    } finally {
+      aiSearching = false;
+    }
+  }
+
+  function clearAiSearch() {
+    aiMatchedIds = null;
+    searchQuery = "";
+  }
+
+  function parseAiSearchIds(response, knownIds) {
+    const trimmed = response.trim();
+    if (!trimmed || /^none$/i.test(trimmed)) return new Set();
+
+    const parsed = parseJsonIds(trimmed);
+    const candidates = parsed || (trimmed.match(/\b\d+\b/g) || []).map(Number);
+    return new Set(candidates.filter(id => knownIds.has(id)));
+  }
+
+  function parseJsonIds(text) {
+    const snippets = [text];
+    const objectMatch = text.match(/\{[\s\S]*\}/);
+    const arrayMatch = text.match(/\[[\s\S]*\]/);
+    if (objectMatch) snippets.push(objectMatch[0]);
+    if (arrayMatch) snippets.push(arrayMatch[0]);
+
+    for (const snippet of snippets) {
+      try {
+        const parsed = JSON.parse(snippet);
+        const ids = Array.isArray(parsed) ? parsed : parsed?.ids;
+        if (Array.isArray(ids)) return ids.map(Number).filter(Number.isFinite);
+      } catch {}
+    }
+
+    return null;
+  }
+
+  function summaryFor(doc) {
+    const id = Number(doc.id);
+    if (decryptedSummaries[id]) return decryptedSummaries[id];
+    if (doc.summary?.length > 0 && doc.summary[0]) return doc.summary[0];
+    return null;
+  }
+
+  async function loadSummariesForDocs(docs) {
+    const backend = getBackend();
+    if (!backend || docs.length === 0) {
+      decryptedSummaries = {};
+      loadedSummaryIds = new Set();
+      return;
+    }
+
+    const token = ++summaryLoadToken;
+    const visibleIds = new Set(docs.map(d => Number(d.id)));
+    loadedSummaryIds = new Set([...loadedSummaryIds].filter(id => visibleIds.has(id)));
+    const keptSummaries = {};
+    for (const id of visibleIds) {
+      if (decryptedSummaries[id]) keptSummaries[id] = decryptedSummaries[id];
+    }
+    if (Object.keys(keptSummaries).length !== Object.keys(decryptedSummaries).length) {
+      decryptedSummaries = keptSummaries;
+    }
+
+    for (const doc of docs) {
+      const id = Number(doc.id);
+      if (loadedSummaryIds.has(id)) continue;
+
+      try {
+        const result = await backend.getEncryptedSummary(doc.id);
+        if (token !== summaryLoadToken) return;
+
+        if ("ok" in result) {
+          const aesKey = await getDocumentKey(id);
+          if (!aesKey) continue;
+          const summary = await decryptText(result.ok.ciphertext, result.ok.iv, aesKey);
+          decryptedSummaries = { ...decryptedSummaries, [id]: summary };
+        }
+        loadedSummaryIds.add(id);
+      } catch (e) {
+        console.warn("Summary list decrypt warning:", e);
+      }
+    }
+  }
 
   $: if (!selectMode) selectedIds = new Set();
   $: allSelected = selectMode && filteredDocs.length > 0 && filteredDocs.every(d => selectedIds.has(Number(d.id)));
@@ -118,9 +262,28 @@
       <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
       </svg>
-      <input type="text" bind:value={searchQuery} placeholder="Search by name or summary..."
-        class="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent" />
+      <input type="text" bind:value={searchQuery} on:input={() => { aiMatchedIds = null; }}
+        placeholder={aiSearching ? "AI is searching..." : "Search or ask AI..."}
+        on:keydown={(e) => { if (e.key === "Enter" && searchQuery.trim()) aiSearch(); }}
+        class="w-full pl-9 pr-10 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent" />
+      {#if aiMatchedIds !== null}
+        <button on:click={clearAiSearch} class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600" title="Clear AI search">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+        </button>
+      {/if}
     </div>
+    <button on:click={aiSearch} disabled={aiSearching || !searchQuery.trim()}
+      class="px-3 py-2 text-sm font-medium rounded-lg transition flex items-center gap-1.5
+        {aiMatchedIds !== null ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400 hover:bg-purple-200 dark:hover:bg-purple-900/50'}
+        disabled:opacity-50 disabled:cursor-not-allowed"
+      title="AI-powered semantic search across document summaries">
+      {#if aiSearching}
+        <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+      {:else}
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+      {/if}
+      AI
+    </button>
     <select bind:value={sortBy}
       class="px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300">
       <option value="date">Recent</option>
@@ -133,6 +296,16 @@
       Select
     </button>
   </div>
+
+  {#if aiMatchedIds !== null}
+    <div class="flex items-center gap-2 mb-3 p-2.5 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
+      <svg class="w-4 h-4 text-purple-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+      <span class="text-sm text-purple-700 dark:text-purple-300 flex-1">
+        AI found {aiMatchedIds.size} result{aiMatchedIds.size !== 1 ? 's' : ''} for "{searchQuery}"
+      </span>
+      <button on:click={clearAiSearch} class="text-xs text-purple-600 hover:text-purple-800 dark:text-purple-400 font-medium">Clear</button>
+    </div>
+  {/if}
 
   {#if selectMode && selectedIds.size > 0}
     <div class="flex items-center gap-2 mb-3 p-3 bg-primary-50 dark:bg-primary-900/20 rounded-lg border border-primary-200 dark:border-primary-800">
@@ -204,11 +377,11 @@
               </span>
             {/if}
             {#if doc.certifiedHash && doc.certifiedHash.length > 0 && doc.certifiedHash[0]}
-              <span class="px-1.5 py-1 text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 rounded-full" title="Integrity verified on ICP">
+              <span class="px-1.5 py-1 text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 rounded-full" title="SHA-256 hash recorded on ICP">
                 <svg class="w-3.5 h-3.5 inline" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zm11.541 3.708a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" /></svg>
               </span>
             {/if}
-            {#if doc.summary && doc.summary.length > 0}
+            {#if summaryFor(doc)}
               <span class="px-2 py-1 text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 rounded-full">
                 AI Summary
               </span>
