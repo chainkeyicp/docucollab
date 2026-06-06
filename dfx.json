@@ -1,0 +1,48 @@
+{
+  "canisters": {
+    "docucollab_backend": {
+      "declarations": {
+        "node_compatibility": true
+      },
+      "main": "src/docucollab_backend/main.mo",
+      "type": "motoko"
+    },
+    "docucollab_ai": {
+      "declarations": {
+        "node_compatibility": true
+      },
+      "main": "src/docucollab_ai/main.mo",
+      "type": "motoko"
+    },
+    "docucollab_frontend": {
+      "dependencies": [
+        "docucollab_backend",
+        "docucollab_ai"
+      ],
+      "source": [
+        "src/docucollab_frontend/dist"
+      ],
+      "type": "assets",
+      "workspace": "docucollab_frontend"
+    },
+    "internet_identity": {
+      "candid": "https://github.com/dfinity/internet-identity/releases/latest/download/internet_identity.did",
+      "frontend": {},
+      "remote": {
+        "id": {
+          "ic": "rdmx6-jaaaa-aaaaa-aaadq-cai"
+        }
+      },
+      "type": "custom",
+      "wasm": "https://github.com/dfinity/internet-identity/releases/latest/download/internet_identity_dev.wasm.gz"
+    }
+  },
+  "defaults": {
+    "build": {
+      "args": "",
+      "packtool": "mops sources"
+    }
+  },
+  "output_env_file": ".env",
+  "version": 1
+}

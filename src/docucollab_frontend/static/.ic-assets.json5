@@ -1,0 +1,11 @@
+[
+  {
+    "match": "**/*",
+    "security_policy": "standard",
+    "headers": {
+      "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; connect-src 'self' http://localhost:* https://icp0.io https://*.icp0.io https://icp-api.io; img-src 'self' data: blob:; style-src * 'unsafe-inline'; style-src-elem * 'unsafe-inline'; font-src *; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; frame-src 'self' https://id.ai blob:; form-action 'self'; upgrade-insecure-requests;",
+      "Permissions-Policy": "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+    },
+    "disable_security_policy_warning": true
+  }
+]
