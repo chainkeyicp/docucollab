@@ -168,7 +168,6 @@
       }
 
       if (loadId !== activeLoadId) return;
-      console.log("[DocuCollab] Decrypted data:", finalData.byteLength, "bytes, first4:", Array.from(finalData.slice(0, 4)));
       cachedDecryptedData = finalData.slice();
 
       const previewBytes = finalData.slice();
@@ -266,7 +265,7 @@
       let uploadData = new Uint8Array(arrayBuffer);
       let textContent = null;
 
-      const extraction = await extractTextFromBytes(arrayBuffer, {
+      const extraction = await extractTextFromBytes(arrayBuffer.slice(0), {
         name: file.name,
         mimeType: file.type,
       });

@@ -48,7 +48,7 @@
       extractionDetail = "";
 
       let textContent = null;
-      const extraction = await extractTextFromBytes(originalBuffer, {
+      const extraction = await extractTextFromBytes(originalBuffer.slice(0), {
         name: file.name,
         mimeType: file.type,
       });
