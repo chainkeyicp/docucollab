@@ -147,6 +147,7 @@
       }
     } catch (e) {
       console.error("Summary error:", e);
+      notify("AI summary failed — you can regenerate it later.", "warning");
     }
   }
 

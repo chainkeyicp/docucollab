@@ -20,6 +20,7 @@
   let usernames = {};
   let versions = [];
   let activeLoadId = 0;
+  let cachedDecryptedData = null;
 
   // AI Chat
   let chatMessages = [];
@@ -79,6 +80,7 @@
     aiDocumentContent = null;
     extractionInfo = null;
     extractionLoading = false;
+    cachedDecryptedData = null;
     imageUrl = null;
     pdfUrl = null;
     docHashHex = null;
@@ -166,6 +168,7 @@
       }
 
       if (loadId !== activeLoadId) return;
+      cachedDecryptedData = finalData;
 
       if (doc.mimeType.startsWith("image/")) {
         const blob = new Blob([finalData], { type: doc.mimeType });
@@ -195,28 +198,32 @@
 
     $isLoading = true;
     try {
-      const chunks = [];
-      for (let i = 0; i < Number(doc.totalChunks); i++) {
-        const result = await backend.downloadChunk(doc.id, i);
-        if ("ok" in result) {
-          chunks.push(result.ok);
-        }
-      }
-      const combined = new Uint8Array(chunks.reduce((acc, c) => acc + c.length, 0));
-      let offset = 0;
-      for (const chunk of chunks) {
-        combined.set(new Uint8Array(chunk), offset);
-        offset += chunk.length;
-      }
+      let finalData = cachedDecryptedData;
 
-      let finalData = combined;
-      if (doc.isEncrypted) {
-        const aesKey = await resolveDocumentKey(accessList);
-        if (aesKey) {
-          finalData = new Uint8Array(await decryptDocument(combined, aesKey));
-        } else {
-          notify("Cannot decrypt: encryption key not available", "error");
-          return;
+      if (!finalData) {
+        const chunks = [];
+        for (let i = 0; i < Number(doc.totalChunks); i++) {
+          const result = await backend.downloadChunk(doc.id, i);
+          if ("ok" in result) {
+            chunks.push(result.ok);
+          }
+        }
+        const combined = new Uint8Array(chunks.reduce((acc, c) => acc + c.length, 0));
+        let offset = 0;
+        for (const chunk of chunks) {
+          combined.set(new Uint8Array(chunk), offset);
+          offset += chunk.length;
+        }
+
+        finalData = combined;
+        if (doc.isEncrypted) {
+          const aesKey = await resolveDocumentKey(accessList);
+          if (aesKey) {
+            finalData = new Uint8Array(await decryptDocument(combined, aesKey));
+          } else {
+            notify("Cannot decrypt: encryption key not available", "error");
+            return;
+          }
         }
       }
 

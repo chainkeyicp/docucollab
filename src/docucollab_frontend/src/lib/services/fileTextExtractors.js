@@ -1,3 +1,5 @@
+import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+
 const MAX_EXTRACTED_CHARS = 90_000;
 
 const TEXT_EXTENSIONS = new Set([
@@ -122,7 +124,7 @@ function detectFormat(name, mimeType) {
 
 async function extractPdfText(arrayBuffer, options) {
   const pdfjs = await import("pdfjs-dist/build/pdf.mjs");
-  pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.mjs", import.meta.url).toString();
+  pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
   const pdf = await pdfjs.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
   const pages = [];
