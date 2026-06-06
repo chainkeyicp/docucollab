@@ -72,7 +72,7 @@ export async function extractTextFromBytes(bytes, options = {}) {
     return emptyResult({
       format,
       method: "failed",
-      warnings: [`Text extraction failed: ${error.message}`],
+      warnings: [`Text extraction failed: ${error?.message || error}`],
     });
   }
 }
