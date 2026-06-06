@@ -4,6 +4,7 @@ import Array "mo:base/Array";
 import Nat "mo:base/Nat";
 import Nat64 "mo:base/Nat64";
 import Char "mo:base/Char";
+import Int "mo:base/Int";
 import Result "mo:base/Result";
 import Error "mo:base/Error";
 import Principal "mo:base/Principal";
@@ -44,21 +45,32 @@ actor DocuCollabAI {
   stable var apiUrl : Text = "https://api.anthropic.com/v1/messages";
   stable var adminPrincipal : ?Principal = null;
 
+  let MAX_AI_INPUT_CHARS : Nat = 100_000;
+
   // ===== HELPERS =====
 
   func truncateForLLM(content : Text, maxChars : Nat) : Text {
     if (content.size() <= maxChars) { return content };
     let chars = Text.toArray(content);
-    let halfSize = maxChars / 2 - 30;
+    let maxCharsInt : Int = maxChars;
+    let halfSizeInt = if (maxCharsInt > 60) { (maxCharsInt - 60) / 2 } else { maxCharsInt / 2 };
+    let halfSize = Int.abs(halfSizeInt);
     let head = Array.subArray(chars, 0, halfSize);
-    let tail = Array.subArray(chars, chars.size() - halfSize, halfSize);
+    let charCountInt : Int = chars.size();
+    let tailStart = if (charCountInt > halfSizeInt) { Int.abs(charCountInt - halfSizeInt) } else { 0 };
+    let tail = Array.subArray(chars, tailStart, halfSize);
     Text.fromIter(head.vals()) # "\n\n[... document continues ...]\n\n" # Text.fromIter(tail.vals())
+  };
+
+  func isTooLargeForAI(content : Text) : Bool {
+    content.size() > MAX_AI_INPUT_CHARS
   };
 
   // ===== ON-CHAIN AI (icp_llm) =====
 
   public shared(msg) func summarizeOnChain(content : Text) : async Result.Result<Text, Text> {
     if (Principal.isAnonymous(msg.caller)) return #err("Anonymous callers not allowed");
+    if (isTooLargeForAI(content)) return #err("Document is too large for AI analysis");
     let trimmed = truncateForLLM(content, 8000);
     try {
       let response = await LLM.prompt(
@@ -73,6 +85,7 @@ actor DocuCollabAI {
 
   public shared(msg) func chatWithDocument(content : Text, question : Text) : async Result.Result<Text, Text> {
     if (Principal.isAnonymous(msg.caller)) return #err("Anonymous callers not allowed");
+    if (isTooLargeForAI(content)) return #err("Document is too large for AI analysis");
     let trimmed = truncateForLLM(content, 7000);
     try {
       let response = await LLM.chat(#Llama3_1_8B).withMessages([
@@ -90,6 +103,7 @@ actor DocuCollabAI {
 
   public shared(msg) func extractKeyPoints(content : Text) : async Result.Result<Text, Text> {
     if (Principal.isAnonymous(msg.caller)) return #err("Anonymous callers not allowed");
+    if (isTooLargeForAI(content)) return #err("Document is too large for AI analysis");
     let trimmed = truncateForLLM(content, 8000);
     try {
       let response = await LLM.prompt(
@@ -104,6 +118,7 @@ actor DocuCollabAI {
 
   public shared(msg) func categorizeDocument(content : Text) : async Result.Result<Text, Text> {
     if (Principal.isAnonymous(msg.caller)) return #err("Anonymous callers not allowed");
+    if (isTooLargeForAI(content)) return #err("Document is too large for AI analysis");
     let trimmed = truncateForLLM(content, 4000);
     try {
       let response = await LLM.prompt(
@@ -142,6 +157,7 @@ actor DocuCollabAI {
 
   public shared(msg) func summarizeTextPremium(content : Text) : async Result.Result<Text, Text> {
     if (Principal.isAnonymous(msg.caller)) return #err("Anonymous callers not allowed");
+    if (isTooLargeForAI(content)) return #err("Document is too large for AI analysis");
     if (apiKey == "") return #err("API key not configured");
 
     let truncated = if (content.size() > 4000) {
@@ -179,7 +195,7 @@ actor DocuCollabAI {
   };
 
   // Keep backward compatibility
-  public shared(msg) func summarizeText(content : Text) : async Result.Result<Text, Text> {
+  public shared(_msg) func summarizeText(content : Text) : async Result.Result<Text, Text> {
     await summarizeOnChain(content)
   };
 

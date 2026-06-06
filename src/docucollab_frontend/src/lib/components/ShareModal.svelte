@@ -91,18 +91,27 @@
     sharing = true;
     try {
       const targetPrincipal = Principal.fromText(principalText.trim());
+      const hasRecipientKey = lookupResult?.publicKey && lookupResult.publicKey.length > 0;
+      if (doc.isEncrypted && !hasRecipientKey) {
+        notify("Encrypted documents can only be shared with registered DocuCollab users.", "error");
+        return;
+      }
 
       // Encrypt AES key for recipient using their public key
       let encryptedAesKey = new Uint8Array(0);
-      if (doc.isEncrypted && lookupResult && lookupResult.publicKey && lookupResult.publicKey.length > 0) {
+      if (doc.isEncrypted && hasRecipientKey) {
         try {
           const aesKey = await getDocumentKey(Number(doc.id));
           if (aesKey) {
             const recipientPubKey = await importPublicKey(lookupResult.publicKey);
             encryptedAesKey = await encryptKeyForRecipient(aesKey, recipientPubKey);
+          } else {
+            notify("Cannot share: owner encryption key is not available in this browser.", "error");
+            return;
           }
         } catch (e) {
-          console.warn("Key exchange warning:", e);
+          notify("Could not wrap the document key for this recipient: " + e.message, "error");
+          return;
         }
       }
 
@@ -195,7 +204,11 @@
           </div>
         </div>
       {:else if principalText.trim() && !validationError && !lookupLoading}
-        <p class="text-xs text-yellow-600 dark:text-yellow-400">User not registered on DocuCollab. They can still receive the document.</p>
+        <p class="text-xs text-yellow-600 dark:text-yellow-400">
+          {doc.isEncrypted
+            ? "Encrypted documents require a registered DocuCollab recipient with a public key."
+            : "User not registered on DocuCollab. They can still receive the document."}
+        </p>
       {/if}
 
       <div class="flex justify-end gap-2 pt-2">

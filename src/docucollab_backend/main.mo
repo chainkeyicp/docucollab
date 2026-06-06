@@ -94,6 +94,7 @@ actor DocuCollab {
   stable var stableUserDocs : [(Principal, [DocumentId])] = [];
   stable var stableActivities : [ActivityEntry] = [];
   stable var stableVersions : [(DocumentId, [VersionInfo])] = [];
+  stable var adminPrincipal : ?Principal = null;
 
   var documents = HashMap.HashMap<DocumentId, DocumentMeta>(16, Nat.equal, func(n : Nat) : Nat32 { Nat32.fromNat(n % 2147483647) });
   var chunks = HashMap.HashMap<Text, Blob>(64, Text.equal, Text.hash);
@@ -102,6 +103,11 @@ actor DocuCollab {
   var userDocs = HashMap.HashMap<Principal, Buffer.Buffer<DocumentId>>(16, Principal.equal, Principal.hash);
   var activities = Buffer.Buffer<ActivityEntry>(32);
   var versionHistory = HashMap.HashMap<DocumentId, Buffer.Buffer<VersionInfo>>(16, Nat.equal, func(n : Nat) : Nat32 { Nat32.fromNat(n % 2147483647) });
+
+  let MAX_DOCUMENT_SIZE : Nat = 50 * 1024 * 1024;
+  let MAX_CHUNK_SIZE : Nat = 1_100_000;
+  let MAX_CHUNKS : Nat = 64;
+  let MAX_USERNAME_LENGTH : Nat = 32;
 
   // ===== UPGRADE HOOKS =====
 
@@ -210,6 +216,18 @@ actor DocuCollab {
     if (Principal.isAnonymous(caller)) {
       return #err("Anonymous users cannot register");
     };
+    if (username.size() == 0 or username.size() > MAX_USERNAME_LENGTH) {
+      return #err("Username must be between 1 and 32 characters");
+    };
+    for ((p, profile) in users.entries()) {
+      if (profile.username == username and not Principal.equal(p, caller)) {
+        return #err("Username is already taken");
+      };
+    };
+    switch (adminPrincipal) {
+      case null { adminPrincipal := ?caller };
+      case (?_) {};
+    };
     let profile : UserProfile = {
       principal = caller;
       username = username;
@@ -246,6 +264,15 @@ actor DocuCollab {
     if (Principal.isAnonymous(caller)) {
       return #err("Anonymous users cannot create documents");
     };
+    if (name.size() == 0) {
+      return #err("Document name is required");
+    };
+    if (size == 0 or size > MAX_DOCUMENT_SIZE) {
+      return #err("Document size must be between 1 byte and 50 MB");
+    };
+    if (totalChunks == 0 or totalChunks > MAX_CHUNKS) {
+      return #err("Document chunk count is outside the supported MVP range");
+    };
     let docId = nextDocId;
     nextDocId += 1;
     let now = Time.now();
@@ -278,6 +305,9 @@ actor DocuCollab {
         };
         if (chunkId >= doc.totalChunks) {
           return #err("Chunk ID exceeds total chunks");
+        };
+        if (data.size() == 0 or data.size() > MAX_CHUNK_SIZE) {
+          return #err("Chunk size is outside the supported MVP range");
         };
         chunks.put(chunkKey(docId, chunkId), data);
         let updated : DocumentMeta = {
@@ -323,7 +353,11 @@ actor DocuCollab {
         let result = Buffer.Buffer<DocumentMeta>(buf.size());
         for (docId in buf.vals()) {
           switch (documents.get(docId)) {
-            case (?doc) result.add(doc);
+            case (?doc) {
+              if (Principal.equal(doc.owner, caller)) {
+                result.add(doc);
+              };
+            };
             case null {};
           };
         };
@@ -375,6 +409,19 @@ actor DocuCollab {
             if (Text.startsWith(key, #text(Nat.toText(docId) # "-"))) {
               accessList.add(acc);
             };
+          };
+        } else {
+          switch (access.get(accessKey(docId, caller))) {
+            case (?acc) {
+              let valid = switch (acc.expiresAt) {
+                case (?exp) { exp > Time.now() };
+                case null true;
+              };
+              if (valid) {
+                accessList.add(acc);
+              };
+            };
+            case null {};
           };
         };
         #ok({
@@ -435,6 +482,12 @@ actor DocuCollab {
         if (not Principal.equal(doc.owner, caller)) {
           return #err("Only the owner can share documents");
         };
+        if (Principal.equal(doc.owner, grantTo)) {
+          return #err("Cannot share a document with its owner");
+        };
+        if (doc.isEncrypted and encryptedKey.size() == 0) {
+          return #err("Encrypted documents require a wrapped document key for the recipient");
+        };
         let sharedAccess : SharedAccess = {
           grantedTo = grantTo;
           grantedBy = caller;
@@ -442,8 +495,14 @@ actor DocuCollab {
           expiresAt = expiresAt;
           encryptedKey = encryptedKey;
         };
+        let alreadyShared = switch (access.get(accessKey(docId, grantTo))) {
+          case (?_) true;
+          case null false;
+        };
         access.put(accessKey(docId, grantTo), sharedAccess);
-        getUserDocs(grantTo).add(docId);
+        if (not alreadyShared) {
+          getUserDocs(grantTo).add(docId);
+        };
         logActivity(#share, caller, docId, doc.name, ?grantTo);
         #ok()
       };
@@ -515,6 +574,12 @@ actor DocuCollab {
         if (not Principal.equal(doc.owner, caller)) {
           return #err("Only the owner can upload new versions");
         };
+        if (size == 0 or size > MAX_DOCUMENT_SIZE) {
+          return #err("Document size must be between 1 byte and 50 MB");
+        };
+        if (totalChunks == 0 or totalChunks > MAX_CHUNKS) {
+          return #err("Document chunk count is outside the supported MVP range");
+        };
         // Save current version to history
         let vInfo : VersionInfo = {
           version = doc.version;
@@ -544,7 +609,7 @@ actor DocuCollab {
           createdAt = doc.createdAt;
           updatedAt = now;
           isEncrypted = doc.isEncrypted;
-          summary = doc.summary;
+          summary = null;
           totalChunks = totalChunks;
           version = ?newVersion;
           certifiedHash = null;
@@ -672,7 +737,13 @@ actor DocuCollab {
     Buffer.toArray(result)
   };
 
-  public query func getAllActivities(limit : Nat) : async [ActivityEntry] {
+  public query(msg) func getAllActivities(limit : Nat) : async [ActivityEntry] {
+    switch (adminPrincipal) {
+      case (?admin) {
+        if (not Principal.equal(msg.caller, admin)) return [];
+      };
+      case null return [];
+    };
     let size = activities.size();
     if (size == 0) return [];
     let cap = if (limit == 0 or limit > size) { size } else { limit };

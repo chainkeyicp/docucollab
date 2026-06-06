@@ -2,7 +2,7 @@
 
 **Decentralized Document Sharing & Collaboration on the Internet Computer**
 
-A fully on-chain document management platform with AI-powered summarization, built on ICP. No servers, no cloud storage -- everything runs in canisters.
+A decentralized document management platform with encrypted on-chain storage and AI-powered document assistance, built on ICP. No application servers, no external database -- the frontend, backend state, access control, and AI orchestration run in canisters.
 
 **Live:** [https://ppfr3-2aaaa-aaaau-agw6q-cai.icp0.io/](https://ppfr3-2aaaa-aaaau-agw6q-cai.icp0.io/)
 
@@ -16,9 +16,9 @@ A fully on-chain document management platform with AI-powered summarization, bui
 |  Frontend        |<--->|  Backend Canister  |<--->|  AI Canister     |
 |  (Asset Canister)|     |  (Motoko)         |     |  (Motoko)        |
 |  SvelteKit +     |     |                   |     |                  |
-|  Tailwind CSS    |     |  - Documents      |     |  - HTTPS Outcalls|
-|                  |     |  - Users          |     |  - Claude API    |
-|  ppfr3-2aaaa...  |     |  - Access Control |     |  - Summarization |
+|  Tailwind CSS    |     |  - Documents      |     |  - ICP LLM       |
+|                  |     |  - Users          |     |  - Optional      |
+|  ppfr3-2aaaa...  |     |  - Access Control |     |    HTTPS Outcalls|
 |                  |     |  - Activity Log   |     |                  |
 +------------------+     |  - Versioning     |     |  pgg2h-miaaa...  |
          |                |                   |     +------------------+
@@ -38,7 +38,7 @@ A fully on-chain document management platform with AI-powered summarization, bui
 | Canister | ID | Purpose |
 |----------|-----|---------|
 | Backend | `piexp-xyaaa-aaaau-agw6a-cai` | Document storage, access control, versioning, activity log |
-| AI | `pgg2h-miaaa-aaaau-agw7a-cai` | AI summarization via HTTPS outcalls to Claude API |
+| AI | `pgg2h-miaaa-aaaau-agw7a-cai` | On-chain AI assistance via `mo:llm`, with optional premium HTTPS outcall support |
 | Frontend | `ppfr3-2aaaa-aaaau-agw6q-cai` | SvelteKit static app served as certified assets |
 
 ## Features
@@ -49,11 +49,12 @@ A fully on-chain document management platform with AI-powered summarization, bui
 - **Search & filter** -- search by name, sort by date/size/name
 - **Batch operations** -- multi-select, batch delete, batch share
 
-### AI Summarization (ICP HTTPS Outcalls)
+### AI Summarization & Document Chat
 - Automatic AI summary generation for text documents on upload
-- Canister-to-canister call triggers HTTPS outcall to Claude API
-- Summary displayed in document detail panel
-- **Demonstrates ICP-unique capability**: smart contracts calling external APIs directly
+- Default AI path uses the ICP LLM canister through `mo:llm`
+- Document chat, key point extraction, and categorization for text files
+- Optional premium mode can call an external Claude API through HTTPS outcalls when configured
+- **Demonstrates ICP-unique capability**: smart contracts can orchestrate AI and external API calls without an application server
 
 ### Access Control & Sharing
 - Share documents by Principal ID or username search
@@ -75,7 +76,7 @@ A fully on-chain document management platform with AI-powered summarization, bui
 ### Storage & Stats
 - Dashboard with document count, shared count, storage used
 - Platform-wide stats (total users, total documents)
-- Storage quota progress bar (2 GB limit display)
+- MVP upload guardrails: 50 MB max document size, 1 MB chunks
 
 ### Authentication
 - Internet Identity via id.ai -- passwordless, privacy-preserving
@@ -89,14 +90,14 @@ A fully on-chain document management platform with AI-powered summarization, bui
 | Backend | Motoko |
 | Frontend | SvelteKit + Tailwind CSS |
 | Auth | Internet Identity (id.ai) |
-| AI | HTTPS Outcalls to Claude API |
+| AI | ICP LLM canister via `mo:llm`; optional Claude HTTPS outcalls |
 | Deployment | dfx SDK v0.25.0 |
 
 ## DocuCollab vs DocuTrack
 
 | Feature | DocuTrack (DFINITY PoC) | DocuCollab |
 |---------|------------------------|------------|
-| AI Summarization | No | Yes (HTTPS Outcalls) |
+| AI Summarization | No | Yes (`mo:llm`, optional HTTPS outcalls) |
 | Document Versioning | No | Yes |
 | Activity / Audit Log | No | Yes |
 | File Preview (img/pdf) | No | Yes |
@@ -149,7 +150,7 @@ docucollab/
     docucollab_backend/
       main.mo                       # Backend canister (documents, users, access, versioning, activity)
     docucollab_ai/
-      main.mo                       # AI canister (HTTPS outcalls, summarization)
+      main.mo                       # AI canister (on-chain LLM, optional HTTPS outcalls)
     docucollab_frontend/
       src/
         routes/+page.svelte         # Main page (landing, dashboard)
@@ -172,11 +173,12 @@ docucollab/
 
 ## ICP-Unique Features Used
 
-1. **HTTPS Outcalls** -- AI canister calls Claude API directly from a smart contract
+1. **On-chain AI** -- AI canister uses the ICP LLM package for document summaries, chat, key points, and categorization
 2. **Internet Identity** -- Passwordless auth with privacy-preserving principals
 3. **Certified Assets** -- Frontend served with cryptographic verification
 4. **Stable Memory** -- Data persists across canister upgrades
-5. **100% On-Chain** -- No servers, no databases, no cloud storage
+5. **On-chain SHA-256 integrity checks** -- document chunk hashes are computed in the backend canister and can be verified by the client
+6. **Optional HTTPS Outcalls** -- premium AI mode can call an external API directly from a canister when configured
 
 ## License
 

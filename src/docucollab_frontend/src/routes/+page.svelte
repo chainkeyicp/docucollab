@@ -195,13 +195,13 @@
           <svg class="w-5 h-5 text-blue-500" fill="currentColor" viewBox="0 0 20 20">
             <path fill-rule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zm11.541 3.708a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
           </svg>
-          <span class="text-sm font-medium text-gray-700 dark:text-gray-300">Certified Integrity</span>
+          <span class="text-sm font-medium text-gray-700 dark:text-gray-300">On-Chain Hash</span>
         </div>
         <div class="flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
           <svg class="w-5 h-5 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
           </svg>
-          <span class="text-sm font-medium text-gray-700 dark:text-gray-300">100% On-Chain</span>
+          <span class="text-sm font-medium text-gray-700 dark:text-gray-300">ICP Native</span>
         </div>
       </div>
       <p class="text-sm text-gray-400 mb-16">Login with Internet Identity to get started</p>
@@ -218,7 +218,7 @@
           <div class="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700">
             <div class="w-10 h-10 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center text-primary-600 font-bold mb-3">2</div>
             <h3 class="font-semibold text-gray-900 dark:text-white mb-1">AI Analyze</h3>
-            <p class="text-sm text-gray-500 dark:text-gray-400">AI-powered analysis using fully on-chain inference (icp_llm) -- no external APIs. Chat, summarize, extract key points.</p>
+            <p class="text-sm text-gray-500 dark:text-gray-400">AI-powered analysis using ICP LLM by default, with optional premium HTTPS outcalls. Chat, summarize, extract key points.</p>
           </div>
           <div class="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700">
             <div class="w-10 h-10 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center text-primary-600 font-bold mb-3">3</div>
@@ -242,8 +242,8 @@
           <div class="flex items-start gap-3 bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
             <span class="text-green-500 mt-0.5">&#10003;</span>
             <div>
-              <p class="font-medium text-gray-900 dark:text-white text-sm">Certified Data Variables</p>
-              <p class="text-xs text-gray-500">SHA-256 document hashes stored via CertifiedData for cryptographic integrity proof</p>
+              <p class="font-medium text-gray-900 dark:text-white text-sm">On-Chain Integrity Hashes</p>
+              <p class="text-xs text-gray-500">SHA-256 document hashes are computed in the backend canister and verified by the client</p>
             </div>
           </div>
           <div class="flex items-start gap-3 bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
@@ -256,8 +256,8 @@
           <div class="flex items-start gap-3 bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
             <span class="text-green-500 mt-0.5">&#10003;</span>
             <div>
-              <p class="font-medium text-gray-900 dark:text-white text-sm">Internet Identity + HTTPS Outcalls</p>
-              <p class="text-xs text-gray-500">Passwordless auth, direct external API calls -- no servers or middleware</p>
+              <p class="font-medium text-gray-900 dark:text-white text-sm">Internet Identity + Optional Outcalls</p>
+              <p class="text-xs text-gray-500">Passwordless auth, canister-hosted UI, and optional direct external API calls</p>
             </div>
           </div>
         </div>
@@ -311,9 +311,9 @@
             if (bytes < 1024) return bytes + " B";
             if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
             return (bytes / 1048576).toFixed(1) + " MB";
-          })()} <span class="text-xs font-normal text-gray-400">/ 2 GB</span></p>
+          })()} <span class="text-xs font-normal text-gray-400">/ 50 MB MVP</span></p>
           <div class="mt-2 w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
-            <div class="bg-primary-500 h-1.5 rounded-full transition-all" style="width: {Math.min(100, $documents.reduce((sum, d) => sum + Number(d.size), 0) / (2 * 1024 * 1024 * 1024) * 100).toFixed(2)}%"></div>
+            <div class="bg-primary-500 h-1.5 rounded-full transition-all" style="width: {Math.min(100, $documents.reduce((sum, d) => sum + Number(d.size), 0) / (50 * 1024 * 1024) * 100).toFixed(2)}%"></div>
           </div>
         </div>
       </div>

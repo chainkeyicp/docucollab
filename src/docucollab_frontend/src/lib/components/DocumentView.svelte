@@ -1,7 +1,7 @@
 <script>
   import { getBackend, getAI } from "$lib/services/auth";
   import { notify, isLoading } from "$lib/stores/app";
-  import { getDocumentKey, decryptDocument, decryptKeyWithPrivateKey, getPrivateKey } from "$lib/services/crypto";
+  import { getDocumentKey, saveDocumentKey, encryptDocument, decryptDocument, decryptKeyWithPrivateKey, getPrivateKey } from "$lib/services/crypto";
   import ShareModal from "./ShareModal.svelte";
   import { createEventDispatcher } from "svelte";
 
@@ -29,6 +29,38 @@
   let verifying = false;
 
   $: if (doc) loadDocument();
+
+  async function resolveDocumentKey(candidateAccessList = accessList) {
+    let aesKey = await getDocumentKey(Number(doc.id));
+    if (aesKey) return aesKey;
+
+    const privateKey = await getPrivateKey();
+    if (!privateKey) return null;
+
+    let candidates = candidateAccessList || [];
+    if (candidates.length === 0) {
+      const backend = getBackend();
+      if (backend) {
+        const docResult = await backend.getDocument(doc.id);
+        if ("ok" in docResult) {
+          candidates = docResult.ok.accessList;
+          accessList = candidates;
+        }
+      }
+    }
+
+    for (const acc of candidates) {
+      const wrappedKey = acc.encryptedKey ? new Uint8Array(acc.encryptedKey) : new Uint8Array(0);
+      if (wrappedKey.length === 0) continue;
+      try {
+        aesKey = await decryptKeyWithPrivateKey(wrappedKey, privateKey);
+        await saveDocumentKey(Number(doc.id), aesKey);
+        return aesKey;
+      } catch {}
+    }
+
+    return null;
+  }
 
   async function loadDocument() {
     const backend = getBackend();
@@ -81,24 +113,7 @@
       let finalData = combined;
       if (doc.isEncrypted) {
         try {
-          let aesKey = await getDocumentKey(Number(doc.id));
-          if (!aesKey) {
-            // Try to decrypt with private key from shared access encryptedKey
-            const docResult = await backend.getDocument(doc.id);
-            if ("ok" in docResult && docResult.ok.accessList.length > 0) {
-              const privateKey = await getPrivateKey();
-              if (privateKey) {
-                for (const acc of docResult.ok.accessList) {
-                  if (acc.encryptedKey && acc.encryptedKey.length > 0) {
-                    try {
-                      aesKey = await decryptKeyWithPrivateKey(acc.encryptedKey, privateKey);
-                      break;
-                    } catch {}
-                  }
-                }
-              }
-            }
-          }
+          const aesKey = await resolveDocumentKey(accessList);
           if (aesKey) {
             const decrypted = await decryptDocument(combined, aesKey);
             finalData = new Uint8Array(decrypted);
@@ -147,7 +162,7 @@
 
       let finalData = combined;
       if (doc.isEncrypted) {
-        const aesKey = await getDocumentKey(Number(doc.id));
+        const aesKey = await resolveDocumentKey(accessList);
         if (aesKey) {
           finalData = new Uint8Array(await decryptDocument(combined, aesKey));
         } else {
@@ -182,9 +197,25 @@
     try {
       const arrayBuffer = await file.arrayBuffer();
       const CHUNK_SIZE = 1024 * 1024;
-      const totalChunks = Math.ceil(arrayBuffer.byteLength / CHUNK_SIZE);
+      let uploadData = new Uint8Array(arrayBuffer);
+      let textContent = null;
 
-      const result = await backend.uploadNewVersion(doc.id, arrayBuffer.byteLength, totalChunks);
+      if (file.type.startsWith("text/") || file.name.endsWith(".md") || file.name.endsWith(".txt")) {
+        textContent = new TextDecoder().decode(arrayBuffer);
+      }
+
+      if (doc.isEncrypted) {
+        const aesKey = await getDocumentKey(Number(doc.id));
+        if (!aesKey) {
+          notify("Cannot update encrypted document: owner encryption key is not available", "error");
+          return;
+        }
+        uploadData = await encryptDocument(arrayBuffer, aesKey);
+      }
+
+      const totalChunks = Math.ceil(uploadData.byteLength / CHUNK_SIZE);
+
+      const result = await backend.uploadNewVersion(doc.id, uploadData.byteLength, totalChunks);
       if ("err" in result) {
         notify(result.err, "error");
         return;
@@ -192,12 +223,32 @@
 
       for (let i = 0; i < totalChunks; i++) {
         const start = i * CHUNK_SIZE;
-        const end = Math.min(start + CHUNK_SIZE, arrayBuffer.byteLength);
-        const chunk = new Uint8Array(arrayBuffer.slice(start, end));
+        const end = Math.min(start + CHUNK_SIZE, uploadData.byteLength);
+        const chunk = new Uint8Array(uploadData.slice(start, end));
         const chunkResult = await backend.uploadChunk(doc.id, i, chunk);
         if ("err" in chunkResult) {
           notify(`Chunk upload failed: ${chunkResult.err}`, "error");
           return;
+        }
+      }
+
+      try {
+        await backend.finalizeDocument(doc.id);
+      } catch (e) {
+        console.warn("Finalize warning:", e);
+      }
+
+      if (textContent) {
+        try {
+          const ai = getAI();
+          if (ai) {
+            const summary = await ai.summarizeText(textContent);
+            if ("ok" in summary) {
+              await backend.setSummary(doc.id, summary.ok);
+            }
+          }
+        } catch (e) {
+          console.warn("Summary refresh warning:", e);
         }
       }
 
@@ -524,7 +575,7 @@
               {#if docHashHex}
                 <span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 rounded-full">
                   <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 1a4.5 4.5 0 00-4.5 4.5V9H5a2 2 0 00-2 2v6a2 2 0 002 2h10a2 2 0 002-2v-6a2 2 0 00-2-2h-.5V5.5A4.5 4.5 0 0010 1zm3 8V5.5a3 3 0 10-6 0V9h6z" clip-rule="evenodd" /></svg>
-                  Verified
+                  Hash stored
                 </span>
               {:else}
                 <span class="text-gray-400 text-xs">Not certified</span>

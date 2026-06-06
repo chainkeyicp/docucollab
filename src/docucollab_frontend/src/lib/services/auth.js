@@ -46,7 +46,6 @@ async function setupActors() {
 
 export async function login() {
   const identityProvider = getIdentityProvider();
-  console.log("Login with identity provider:", identityProvider);
 
   return new Promise((resolve, reject) => {
     authClient.login({

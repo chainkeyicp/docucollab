@@ -39,13 +39,13 @@
   }
 
   function actionIcon(action) {
-    if ("upload" in action) return "⬆";
-    if ("download" in action) return "⬇";
-    if ("share" in action) return "🔗";
-    if ("revoke" in action) return "🚫";
-    if ("delete" in action) return "🗑";
-    if ("summary" in action) return "🤖";
-    return "•";
+    if ("upload" in action) return "^";
+    if ("download" in action) return "v";
+    if ("share" in action) return "S";
+    if ("revoke" in action) return "R";
+    if ("delete" in action) return "X";
+    if ("summary" in action) return "AI";
+    return "*";
   }
 
   function actionColor(action) {
@@ -76,14 +76,14 @@
     <div class="space-y-3 max-h-[400px] overflow-auto">
       {#each activities as entry}
         <div class="flex items-start gap-3 text-sm">
-          <span class="{actionColor(entry.action)} text-lg leading-none mt-0.5">{actionIcon(entry.action)}</span>
+          <span class="{actionColor(entry.action)} text-sm font-semibold leading-none mt-0.5 min-w-4">{actionIcon(entry.action)}</span>
           <div class="flex-1 min-w-0">
             <p class="text-gray-800 dark:text-gray-200">
               <span class="font-medium">{actionLabel(entry.action)}</span>
               <span class="text-gray-500 dark:text-gray-400 truncate"> {entry.documentName}</span>
             </p>
             {#if entry.targetUser && entry.targetUser.length > 0}
-              <p class="text-xs text-gray-400 truncate">→ {entry.targetUser[0].toText()}</p>
+              <p class="text-xs text-gray-400 truncate">to {entry.targetUser[0].toText()}</p>
             {/if}
           </div>
           <span class="text-xs text-gray-400 whitespace-nowrap">{formatDate(entry.timestamp)}</span>
