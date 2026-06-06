@@ -27,6 +27,25 @@ Result: passes.
 
 Known warning: Vite/SvelteKit emits dependency export warnings related to the installed SvelteKit/Svelte combination. These warnings were present before the grant-readiness changes and do not fail the production build.
 
+```bash
+node --check src/docucollab_frontend/src/lib/services/fileTextExtractors.js
+```
+
+Result: passes.
+
+```bash
+node --input-type=module
+# Imported fileTextExtractors.js and tested TXT, CSV, XLSX, and DOCX extraction.
+```
+
+Result: passes. TXT, CSV, and DOCX smoke checks returned readable extracted text directly in Node. XLSX passed with a Node `DOMParser` polyfill, matching the browser API expected by `read-excel-file/browser`. PDF extraction is covered by the production Vite build, which bundles the PDF.js worker asset successfully.
+
+```bash
+npm audit --workspace src/docucollab_frontend --omit=dev --json
+```
+
+Result: passes with 0 production vulnerabilities.
+
 ## Browser Smoke Test
 
 Local URL: `http://127.0.0.1:5178/`

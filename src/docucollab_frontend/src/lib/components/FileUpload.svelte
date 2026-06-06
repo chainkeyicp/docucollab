@@ -1,7 +1,8 @@
 <script>
   import { getBackend, getAI } from "$lib/services/auth";
-  import { documents, notify, isLoading } from "$lib/stores/app";
+  import { notify, isLoading } from "$lib/stores/app";
   import { generateDocumentKey, encryptDocument, saveDocumentKey } from "$lib/services/crypto";
+  import { describeExtraction, extractTextFromBytes, isAiReadable } from "$lib/services/fileTextExtractors";
   import { createEventDispatcher } from "svelte";
 
   const dispatch = createEventDispatcher();
@@ -9,6 +10,8 @@
 
   let dragOver = false;
   let uploadProgress = 0;
+  let extractionStatus = "";
+  let extractionDetail = "";
 
   function handleDragOver(e) {
     e.preventDefault();
@@ -41,11 +44,25 @@
     try {
       const originalBuffer = await file.arrayBuffer();
 
-      // Extract text for AI BEFORE encryption
+      extractionStatus = "Extracting AI-readable text...";
+      extractionDetail = "";
+
       let textContent = null;
-      if (file.type.startsWith("text/") || file.name.endsWith(".md") || file.name.endsWith(".txt")) {
-        textContent = new TextDecoder().decode(originalBuffer);
+      const extraction = await extractTextFromBytes(originalBuffer, {
+        name: file.name,
+        mimeType: file.type,
+      });
+
+      extractionDetail = describeExtraction(extraction);
+      if (isAiReadable(extraction)) {
+        textContent = extraction.text;
+        extractionStatus = "AI text ready";
+      } else {
+        extractionStatus = "AI text unavailable";
       }
+
+      await tickOnce();
+      extractionStatus = "Encrypting document...";
 
       // Encrypt the document
       const aesKey = await generateDocumentKey();
@@ -93,12 +110,17 @@
         console.warn("Finalize warning:", e);
       }
 
-      notify("Document uploaded & encrypted!", "success");
+      notify(
+        textContent
+          ? "Document uploaded & encrypted. AI summary queued."
+          : `Document uploaded & encrypted. ${extractionDetail}`,
+        textContent ? "success" : "info"
+      );
       dispatch("uploaded");
 
-      // Trigger AI summary for text files (using pre-encryption content)
+      // Trigger AI summary using text extracted before encryption.
       if (textContent) {
-        triggerSummary(docId, new TextEncoder().encode(textContent).buffer);
+        triggerSummary(docId, textContent);
       }
     } catch (e) {
       console.error("Upload error:", e);
@@ -106,16 +128,17 @@
     } finally {
       $isLoading = false;
       uploadProgress = 0;
+      extractionStatus = "";
+      extractionDetail = "";
     }
   }
 
-  async function triggerSummary(docId, arrayBuffer) {
+  async function triggerSummary(docId, text) {
     try {
       const ai = getAI();
       const backend = getBackend();
       if (!ai || !backend) return;
 
-      const text = new TextDecoder().decode(arrayBuffer);
       const result = await ai.summarizeText(text);
       if ("ok" in result) {
         await backend.setSummary(docId, result.ok);
@@ -125,6 +148,10 @@
     } catch (e) {
       console.error("Summary error:", e);
     }
+  }
+
+  function tickOnce() {
+    return new Promise((resolve) => requestAnimationFrame(resolve));
   }
 </script>
 
@@ -139,7 +166,17 @@
 >
   <input type="file" on:change={handleFileSelect} class="hidden" id="file-input" />
 
-  {#if uploadProgress > 0}
+  {#if extractionStatus && uploadProgress === 0}
+    <div class="space-y-3">
+      <svg class="w-10 h-10 mx-auto text-primary-500 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+      </svg>
+      <p class="text-sm text-gray-600 dark:text-gray-400">{extractionStatus}</p>
+      {#if extractionDetail}
+        <p class="text-xs text-gray-500">{extractionDetail}</p>
+      {/if}
+    </div>
+  {:else if uploadProgress > 0}
     <div class="space-y-3">
       <svg class="w-10 h-10 mx-auto text-primary-500 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />

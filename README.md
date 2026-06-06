@@ -50,9 +50,11 @@ A decentralized document management platform with encrypted on-chain storage and
 - **Batch operations** -- multi-select, batch delete, batch share
 
 ### AI Summarization & Document Chat
-- Automatic AI summary generation for text documents on upload
+- Automatic AI summary generation for AI-readable documents on upload
+- Client-side text extraction for TXT/MD/JSON/HTML, PDF, DOCX, CSV, and XLSX before encryption
 - Default AI path uses the ICP LLM canister through `mo:llm`
-- Document chat, key point extraction, and categorization for text files
+- Document chat, key point extraction, and categorization over extracted document text
+- Images and scanned PDFs are detected as OCR-required instead of being misrepresented as LLM-readable
 - Optional premium mode can call an external Claude API through HTTPS outcalls when configured
 - **Demonstrates ICP-unique capability**: smart contracts can orchestrate AI and external API calls without an application server
 
@@ -91,6 +93,7 @@ A decentralized document management platform with encrypted on-chain storage and
 | Frontend | SvelteKit + Tailwind CSS |
 | Auth | Internet Identity (id.ai) |
 | AI | ICP LLM canister via `mo:llm`; optional Claude HTTPS outcalls |
+| File Text Extraction | `pdfjs-dist`, `mammoth`, `read-excel-file` |
 | Deployment | dfx SDK v0.25.0 |
 
 ## DocuCollab vs DocuTrack
@@ -112,7 +115,7 @@ A decentralized document management platform with encrypted on-chain storage and
 
 ### Prerequisites
 - [dfx SDK](https://internetcomputer.org/docs/current/developer-docs/setup/install) v0.25.0+
-- Node.js 18+
+- Node.js 20.19+
 - pnpm
 
 ### Local Development
@@ -165,6 +168,7 @@ docucollab/
             Notification.svelte     # Toast notifications
           services/
             auth.js                 # Internet Identity auth service
+            fileTextExtractors.js   # Client-side AI-readable text extraction
           stores/
             app.js                  # Svelte stores
       tailwind.config.js
@@ -178,7 +182,8 @@ docucollab/
 3. **Certified Assets** -- Frontend served with cryptographic verification
 4. **Stable Memory** -- Data persists across canister upgrades
 5. **On-chain SHA-256 integrity checks** -- document chunk hashes are computed in the backend canister and can be verified by the client
-6. **Optional HTTPS Outcalls** -- premium AI mode can call an external API directly from a canister when configured
+6. **Client-side extraction before encrypted storage** -- AI-readable text is derived in the browser so plaintext document text is not stored unencrypted in the backend canister
+7. **Optional HTTPS Outcalls** -- premium AI mode can call an external API directly from a canister when configured
 
 ## License
 

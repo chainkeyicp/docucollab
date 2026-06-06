@@ -2,19 +2,24 @@
   import { getBackend, getAI } from "$lib/services/auth";
   import { notify, isLoading } from "$lib/stores/app";
   import { getDocumentKey, saveDocumentKey, encryptDocument, decryptDocument, decryptKeyWithPrivateKey, getPrivateKey } from "$lib/services/crypto";
+  import { describeExtraction, extractTextFromBytes, isAiReadable } from "$lib/services/fileTextExtractors";
   import ShareModal from "./ShareModal.svelte";
-  import { createEventDispatcher } from "svelte";
+  import { createEventDispatcher, onDestroy } from "svelte";
 
   const dispatch = createEventDispatcher();
 
   export let doc;
   let showShareModal = false;
-  let documentContent = null;
+  let textPreviewContent = null;
+  let aiDocumentContent = null;
+  let extractionInfo = null;
+  let extractionLoading = false;
   let imageUrl = null;
   let pdfUrl = null;
   let accessList = [];
   let usernames = {};
   let versions = [];
+  let activeLoadId = 0;
 
   // AI Chat
   let chatMessages = [];
@@ -29,6 +34,11 @@
   let verifying = false;
 
   $: if (doc) loadDocument();
+
+  onDestroy(() => {
+    if (imageUrl) URL.revokeObjectURL(imageUrl);
+    if (pdfUrl) URL.revokeObjectURL(pdfUrl);
+  });
 
   async function resolveDocumentKey(candidateAccessList = accessList) {
     let aesKey = await getDocumentKey(Number(doc.id));
@@ -62,9 +72,36 @@
     return null;
   }
 
+  function resetLoadedContent() {
+    if (imageUrl) URL.revokeObjectURL(imageUrl);
+    if (pdfUrl) URL.revokeObjectURL(pdfUrl);
+    textPreviewContent = null;
+    aiDocumentContent = null;
+    extractionInfo = null;
+    extractionLoading = false;
+    imageUrl = null;
+    pdfUrl = null;
+    docHashHex = null;
+    keyPoints = null;
+    category = null;
+    chatMessages = [];
+  }
+
+  function applyExtraction(extraction) {
+    extractionInfo = extraction;
+    if (isAiReadable(extraction)) {
+      aiDocumentContent = extraction.text;
+      if (!imageUrl && !pdfUrl) {
+        textPreviewContent = extraction.text;
+      }
+    }
+  }
+
   async function loadDocument() {
     const backend = getBackend();
     if (!backend || !doc) return;
+    const loadId = ++activeLoadId;
+    resetLoadedContent();
 
     try {
       const result = await backend.getDocument(doc.id);
@@ -119,24 +156,36 @@
             finalData = new Uint8Array(decrypted);
           } else {
             notify("Cannot decrypt: encryption key not available", "error");
+            return;
           }
         } catch (e) {
           console.error("Decryption error:", e);
           notify("Decryption failed: " + e.message, "error");
+          return;
         }
       }
 
-      if (doc.mimeType.startsWith("text/") || doc.name.endsWith(".md") || doc.name.endsWith(".txt")) {
-        documentContent = new TextDecoder().decode(finalData);
-      } else if (doc.mimeType.startsWith("image/")) {
+      if (loadId !== activeLoadId) return;
+
+      if (doc.mimeType.startsWith("image/")) {
         const blob = new Blob([finalData], { type: doc.mimeType });
         imageUrl = URL.createObjectURL(blob);
-      } else if (doc.mimeType === "application/pdf") {
+      } else if (doc.mimeType === "application/pdf" || doc.name.toLowerCase().endsWith(".pdf")) {
         const blob = new Blob([finalData], { type: "application/pdf" });
         pdfUrl = URL.createObjectURL(blob);
       }
+
+      extractionLoading = true;
+      const extraction = await extractTextFromBytes(finalData, {
+        name: doc.name,
+        mimeType: doc.mimeType,
+      });
+      if (loadId !== activeLoadId) return;
+      applyExtraction(extraction);
     } catch (e) {
       console.error("Load error:", e);
+    } finally {
+      if (loadId === activeLoadId) extractionLoading = false;
     }
   }
 
@@ -200,12 +249,15 @@
       let uploadData = new Uint8Array(arrayBuffer);
       let textContent = null;
 
-      if (file.type.startsWith("text/") || file.name.endsWith(".md") || file.name.endsWith(".txt")) {
-        textContent = new TextDecoder().decode(arrayBuffer);
-      }
+      const extraction = await extractTextFromBytes(arrayBuffer, {
+        name: file.name,
+        mimeType: file.type,
+      });
+      const extractionDetail = describeExtraction(extraction);
+      if (isAiReadable(extraction)) textContent = extraction.text;
 
       if (doc.isEncrypted) {
-        const aesKey = await getDocumentKey(Number(doc.id));
+        const aesKey = await resolveDocumentKey(accessList);
         if (!aesKey) {
           notify("Cannot update encrypted document: owner encryption key is not available", "error");
           return;
@@ -238,6 +290,7 @@
         console.warn("Finalize warning:", e);
       }
 
+      let summaryUpdated = false;
       if (textContent) {
         try {
           const ai = getAI();
@@ -245,6 +298,7 @@
             const summary = await ai.summarizeText(textContent);
             if ("ok" in summary) {
               await backend.setSummary(doc.id, summary.ok);
+              summaryUpdated = true;
             }
           }
         } catch (e) {
@@ -252,7 +306,12 @@
         }
       }
 
-      notify(`Version ${Number(result.ok)} uploaded!`, "success");
+      notify(
+        summaryUpdated
+          ? `Version ${Number(result.ok)} uploaded and AI summary refreshed.`
+          : `Version ${Number(result.ok)} uploaded. ${textContent ? "AI summary refresh skipped." : extractionDetail}`,
+        summaryUpdated || textContent ? "success" : "info"
+      );
       dispatch("close");
     } catch (e) {
       notify("Version upload failed: " + e.message, "error");
@@ -262,7 +321,7 @@
   }
 
   async function sendChat() {
-    if (!chatInput.trim() || !documentContent) return;
+    if (!chatInput.trim() || !aiDocumentContent) return;
     const ai = getAI();
     if (!ai) return;
 
@@ -272,7 +331,7 @@
     chatLoading = true;
 
     try {
-      const result = await ai.chatWithDocument(documentContent, question);
+      const result = await ai.chatWithDocument(aiDocumentContent, question);
       if ("ok" in result) {
         chatMessages = [...chatMessages, { role: "ai", text: result.ok }];
       } else {
@@ -286,13 +345,13 @@
   }
 
   async function fetchKeyPoints() {
-    if (!documentContent) return;
+    if (!aiDocumentContent) return;
     const ai = getAI();
     if (!ai) return;
 
     chatLoading = true;
     try {
-      const result = await ai.extractKeyPoints(documentContent);
+      const result = await ai.extractKeyPoints(aiDocumentContent);
       if ("ok" in result) keyPoints = result.ok;
       else notify("Failed: " + result.err, "error");
     } catch (e) {
@@ -303,13 +362,13 @@
   }
 
   async function fetchCategory() {
-    if (!documentContent) return;
+    if (!aiDocumentContent) return;
     const ai = getAI();
     if (!ai) return;
 
     chatLoading = true;
     try {
-      const result = await ai.categorizeDocument(documentContent);
+      const result = await ai.categorizeDocument(aiDocumentContent);
       if ("ok" in result) category = result.ok.trim();
       else notify("Failed: " + result.err, "error");
     } catch (e) {
@@ -355,7 +414,7 @@
   }
 
   async function regenerateSummary() {
-    if (!documentContent) return;
+    if (!aiDocumentContent) return;
     const ai = getAI();
     const backend = getBackend();
     if (!ai || !backend) return;
@@ -363,8 +422,8 @@
     chatLoading = true;
     try {
       const result = aiMode === "premium"
-        ? await ai.summarizeTextPremium(documentContent)
-        : await ai.summarizeOnChain(documentContent);
+        ? await ai.summarizeTextPremium(aiDocumentContent)
+        : await ai.summarizeOnChain(aiDocumentContent);
       if ("ok" in result) {
         await backend.setSummary(doc.id, result.ok);
         doc.summary = [result.ok];
@@ -432,8 +491,8 @@
   <div class="grid grid-cols-1 lg:grid-cols-3 divide-y lg:divide-y-0 lg:divide-x divide-gray-200 dark:divide-gray-700">
     <!-- Content -->
     <div class="lg:col-span-2 p-4 min-h-[200px] sm:min-h-[300px] max-h-[400px] sm:max-h-[600px] overflow-auto">
-      {#if documentContent !== null}
-        <pre class="text-sm text-gray-800 dark:text-gray-200 whitespace-pre-wrap font-mono">{documentContent}</pre>
+      {#if textPreviewContent !== null}
+        <pre class="text-sm text-gray-800 dark:text-gray-200 whitespace-pre-wrap font-mono">{textPreviewContent}</pre>
       {:else if imageUrl}
         <div class="flex items-center justify-center h-full">
           <img src={imageUrl} alt={doc.name} class="max-w-full max-h-[580px] rounded-lg object-contain" />
@@ -465,7 +524,7 @@
       <div>
         <div class="flex items-center justify-between mb-2">
           <h3 class="text-sm font-semibold text-gray-900 dark:text-white">AI Summary</h3>
-          {#if documentContent}
+          {#if aiDocumentContent}
             <button on:click={regenerateSummary} disabled={chatLoading}
               class="text-xs text-primary-600 hover:text-primary-700 disabled:opacity-50">
               {chatLoading ? "..." : "Regenerate"}
@@ -475,9 +534,23 @@
         {#if doc.summary && doc.summary.length > 0 && doc.summary[0]}
           <p class="text-sm text-gray-600 dark:text-gray-400 leading-relaxed whitespace-pre-line">{doc.summary[0]}</p>
         {:else}
-          <p class="text-sm text-gray-400 italic">No summary available. Upload a text file to auto-generate.</p>
+          <p class="text-sm text-gray-400 italic">No summary available for this document yet.</p>
         {/if}
       </div>
+
+      {#if extractionLoading}
+        <div class="text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-700/50 rounded-lg p-2">
+          Extracting AI-readable text...
+        </div>
+      {:else if extractionInfo}
+        <div class="text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-700/50 rounded-lg p-2 space-y-1">
+          <p class="font-medium text-gray-700 dark:text-gray-300">AI Source</p>
+          <p>{describeExtraction(extractionInfo)}</p>
+          {#if extractionInfo.text && extractionInfo.warnings.length > 0}
+            <p>{extractionInfo.warnings[0]}</p>
+          {/if}
+        </div>
+      {/if}
 
       <!-- Category Badge -->
       {#if category}
@@ -488,7 +561,7 @@
       {/if}
 
       <!-- AI Quick Actions -->
-      {#if documentContent}
+      {#if aiDocumentContent}
         <div class="flex gap-2">
           <button on:click={fetchKeyPoints} disabled={chatLoading}
             class="flex-1 px-2 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition disabled:opacity-50">
@@ -510,7 +583,7 @@
       {/if}
 
       <!-- AI Chat -->
-      {#if documentContent}
+      {#if aiDocumentContent}
         <div>
           <h3 class="text-sm font-semibold text-gray-900 dark:text-white mb-2">Ask AI about this document</h3>
           <div class="space-y-2 max-h-[200px] overflow-auto mb-2">
