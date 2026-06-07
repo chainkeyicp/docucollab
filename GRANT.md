@@ -40,7 +40,7 @@ DocuCollab is built around capabilities that are specific to the Internet Comput
 - Current upload guardrails are set to 50 MB per document and 1 MB chunks.
 - `mo:llm` accepts text input, so non-text documents are converted to extracted text before AI analysis.
 - Images and scanned PDFs are OCR-processed client-side via Tesseract.js. This extracts visible text; AI vision for describing non-text image content depends on future ICP LLM multimodal support.
-- Plain extracted document text is transient in the browser and is not stored in the backend canister. If a user opts into AI summaries, the generated summary is encrypted locally with the document key before canister storage. The canister stores summary ciphertext and nonce; owners and shared recipients can decrypt summaries only when they have the document key.
+- Plain extracted document text is transient in the browser and is not stored in the backend canister. For AI-readable files, DocuCollab generates a summary by default after upload, then encrypts that generated summary locally with the document key before canister storage. The canister stores summary ciphertext and nonce; owners and shared recipients can decrypt summaries only when they have the document key.
 - Integrity verification is a canister-computed SHA-256 hash checked by the client. A future milestone can add a Merkle witness flow for stronger per-document certified proofs.
 - Real-time collaborative editing is out of scope for the current MVP. The current collaboration model is sharing, access control, versioning, and audit history.
 
@@ -85,10 +85,10 @@ Deliverables:
 
 - Browser-side extraction for PDF, DOCX, CSV, XLSX, and plain-text formats.
 - Browser-side OCR for images and scanned PDFs via self-hosted Tesseract.js WebAssembly assets.
-- Explicit opt-in AI summary generation on upload for extracted and OCR-processed text.
+- Automatic encrypted AI summary generation on upload for extracted and OCR-processed text.
 - Document chat, key points, and categorization over extracted text.
 - Search across document names and locally decrypted AI-generated summaries.
-- No unencrypted extracted text or new plaintext summaries stored in the backend canister; generated summaries require user opt-in and are stored encrypted.
+- No unencrypted extracted text or new plaintext summaries stored in the backend canister; generated summaries are stored encrypted.
 
 Verification:
 

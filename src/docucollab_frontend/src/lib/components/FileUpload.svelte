@@ -115,10 +115,10 @@
       }
 
       // Finalize document (compute SHA-256 hash for integrity verification)
-      try {
-        await backend.finalizeDocument(docId);
-      } catch (e) {
-        console.warn("Finalize warning:", e);
+      const finalizeResult = await backend.finalizeDocument(docId);
+      if ("err" in finalizeResult) {
+        notify(`Finalize failed: ${finalizeResult.err}`, "error");
+        return;
       }
 
       // Generate AI summary inline — wait for it to complete

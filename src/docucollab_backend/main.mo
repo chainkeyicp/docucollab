@@ -50,6 +50,13 @@ actor DocuCollab {
     totalChunks : Nat;
   };
 
+  type PendingVersion = {
+    version : Nat;
+    size : Nat;
+    totalChunks : Nat;
+    startedAt : Int;
+  };
+
   public type SharedAccess = {
     grantedTo : Principal;
     grantedBy : Principal;
@@ -102,6 +109,7 @@ actor DocuCollab {
   stable var stableActivities : [ActivityEntry] = [];
   stable var stableVersions : [(DocumentId, [VersionInfo])] = [];
   stable var stableEncryptedSummaries : [(DocumentId, EncryptedSummary)] = [];
+  stable var stablePendingVersions : [(DocumentId, PendingVersion)] = [];
   stable var adminPrincipal : ?Principal = null;
 
   var documents = HashMap.HashMap<DocumentId, DocumentMeta>(16, Nat.equal, func(n : Nat) : Nat32 { Nat32.fromNat(n % 2147483647) });
@@ -112,6 +120,7 @@ actor DocuCollab {
   var activities = Buffer.Buffer<ActivityEntry>(32);
   var versionHistory = HashMap.HashMap<DocumentId, Buffer.Buffer<VersionInfo>>(16, Nat.equal, func(n : Nat) : Nat32 { Nat32.fromNat(n % 2147483647) });
   var encryptedSummaries = HashMap.HashMap<DocumentId, EncryptedSummary>(16, Nat.equal, func(n : Nat) : Nat32 { Nat32.fromNat(n % 2147483647) });
+  var pendingVersions = HashMap.HashMap<DocumentId, PendingVersion>(16, Nat.equal, func(n : Nat) : Nat32 { Nat32.fromNat(n % 2147483647) });
 
   let MAX_DOCUMENT_SIZE : Nat = 50 * 1024 * 1024;
   let MAX_CHUNK_SIZE : Nat = 1_100_000;
@@ -135,6 +144,7 @@ actor DocuCollab {
       func(entry) { (entry.0, Buffer.toArray(entry.1)) }
     );
     stableEncryptedSummaries := Iter.toArray(encryptedSummaries.entries());
+    stablePendingVersions := Iter.toArray(pendingVersions.entries());
   };
 
   system func postupgrade() {
@@ -154,6 +164,7 @@ actor DocuCollab {
       versionHistory.put(docId, buf);
     };
     for ((k, v) in stableEncryptedSummaries.vals()) { encryptedSummaries.put(k, v) };
+    for ((k, v) in stablePendingVersions.vals()) { pendingVersions.put(k, v) };
     stableDocuments := [];
     stableChunks := [];
     stableUsers := [];
@@ -162,12 +173,17 @@ actor DocuCollab {
     stableActivities := [];
     stableVersions := [];
     stableEncryptedSummaries := [];
+    stablePendingVersions := [];
   };
 
   // ===== HELPERS =====
 
   func chunkKey(docId : DocumentId, chunkId : ChunkId) : Text {
     Nat.toText(docId) # "-" # Nat.toText(chunkId)
+  };
+
+  func pendingChunkKey(docId : DocumentId, chunkId : ChunkId) : Text {
+    "pending-" # Nat.toText(docId) # "-" # Nat.toText(chunkId)
   };
 
   func accessKey(docId : DocumentId, p : Principal) : Text {
@@ -187,6 +203,45 @@ actor DocuCollab {
 
   func getVersion(v : ?Nat) : Nat {
     switch (v) { case (?n) n; case null 1 };
+  };
+
+  func hasRegisteredPublicKey(p : Principal) : Bool {
+    switch (users.get(p)) {
+      case (?profile) profile.publicKey.size() > 0;
+      case null false;
+    };
+  };
+
+  func addVersionHistory(docId : DocumentId, doc : DocumentMeta) {
+    let vInfo : VersionInfo = {
+      version = doc.version;
+      size = doc.size;
+      updatedAt = doc.updatedAt;
+      totalChunks = doc.totalChunks;
+    };
+    let hist = switch (versionHistory.get(docId)) {
+      case (?buf) buf;
+      case null {
+        let buf = Buffer.Buffer<VersionInfo>(4);
+        versionHistory.put(docId, buf);
+        buf;
+      };
+    };
+    hist.add(vInfo);
+  };
+
+  func computeDocHash(docId : DocumentId, totalChunks : Nat, staged : Bool) : ?Blob {
+    let digest = Sha256.Digest(#sha256);
+    var i : Nat = 0;
+    while (i < totalChunks) {
+      let key = if (staged) { pendingChunkKey(docId, i) } else { chunkKey(docId, i) };
+      switch (chunks.get(key)) {
+        case (?data) { digest.writeIter(data.vals()) };
+        case null { return null };
+      };
+      i += 1;
+    };
+    ?digest.sum()
   };
 
   func logActivity(action : ActivityAction, who : Principal, docId : DocumentId, docName : Text, target : ?Principal) {
@@ -315,29 +370,44 @@ actor DocuCollab {
         if (not Principal.equal(doc.owner, caller)) {
           return #err("Only the owner can upload chunks");
         };
-        if (chunkId >= doc.totalChunks) {
-          return #err("Chunk ID exceeds total chunks");
-        };
         if (data.size() == 0 or data.size() > MAX_CHUNK_SIZE) {
           return #err("Chunk size is outside the supported MVP range");
         };
-        chunks.put(chunkKey(docId, chunkId), data);
-        let updated : DocumentMeta = {
-          id = doc.id;
-          name = doc.name;
-          mimeType = doc.mimeType;
-          size = doc.size;
-          owner = doc.owner;
-          createdAt = doc.createdAt;
-          updatedAt = Time.now();
-          isEncrypted = doc.isEncrypted;
-          summary = doc.summary;
-          totalChunks = doc.totalChunks;
-          version = doc.version;
-          certifiedHash = doc.certifiedHash;
-        };
-        documents.put(docId, updated);
-        #ok()
+        switch (pendingVersions.get(docId)) {
+          case (?pending) {
+            if (chunkId >= pending.totalChunks) {
+              return #err("Chunk ID exceeds pending version chunk count");
+            };
+            chunks.put(pendingChunkKey(docId, chunkId), data);
+            #ok()
+          };
+          case null {
+            if (chunkId >= doc.totalChunks) {
+              return #err("Chunk ID exceeds total chunks");
+            };
+            switch (doc.certifiedHash) {
+              case (?_) { return #err("Document is finalized; start a new version before replacing chunks") };
+              case null {};
+            };
+            chunks.put(chunkKey(docId, chunkId), data);
+            let updated : DocumentMeta = {
+              id = doc.id;
+              name = doc.name;
+              mimeType = doc.mimeType;
+              size = doc.size;
+              owner = doc.owner;
+              createdAt = doc.createdAt;
+              updatedAt = Time.now();
+              isEncrypted = doc.isEncrypted;
+              summary = doc.summary;
+              totalChunks = doc.totalChunks;
+              version = doc.version;
+              certifiedHash = null;
+            };
+            documents.put(docId, updated);
+            #ok()
+          };
+        }
       };
       case null #err("Document not found");
     };
@@ -458,6 +528,17 @@ actor DocuCollab {
           chunks.delete(chunkKey(docId, i));
           i += 1;
         };
+        switch (pendingVersions.get(docId)) {
+          case (?pending) {
+            var pendingIndex : Nat = 0;
+            while (pendingIndex < pending.totalChunks) {
+              chunks.delete(pendingChunkKey(docId, pendingIndex));
+              pendingIndex += 1;
+            };
+            pendingVersions.delete(docId);
+          };
+          case null {};
+        };
         let keysToRemove = Buffer.Buffer<Text>(4);
         for ((key, _) in access.entries()) {
           if (Text.startsWith(key, #text(Nat.toText(docId) # "-"))) {
@@ -500,6 +581,9 @@ actor DocuCollab {
         };
         if (doc.isEncrypted and encryptedKey.size() == 0) {
           return #err("Encrypted documents require a wrapped document key for the recipient");
+        };
+        if (doc.isEncrypted and not hasRegisteredPublicKey(grantTo)) {
+          return #err("Encrypted documents can only be shared with registered users that have a public key");
         };
         let sharedAccess : SharedAccess = {
           grantedTo = grantTo;
@@ -626,49 +710,25 @@ actor DocuCollab {
         if (totalChunks == 0 or totalChunks > MAX_CHUNKS) {
           return #err("Document chunk count is outside the supported MVP range");
         };
-        // Save current version to history
-        let vInfo : VersionInfo = {
-          version = doc.version;
-          size = doc.size;
-          updatedAt = doc.updatedAt;
-          totalChunks = doc.totalChunks;
-        };
-        let hist = switch (versionHistory.get(docId)) {
-          case (?buf) buf;
-          case null {
-            let buf = Buffer.Buffer<VersionInfo>(4);
-            versionHistory.put(docId, buf);
-            buf;
+        switch (pendingVersions.get(docId)) {
+          case (?oldPending) {
+            var j : Nat = 0;
+            while (j < oldPending.totalChunks) {
+              chunks.delete(pendingChunkKey(docId, j));
+              j += 1;
+            };
           };
+          case null {};
         };
-        hist.add(vInfo);
-        // Update document with new version
         let curVer = getVersion(doc.version);
         let newVersion = curVer + 1;
-        let now = Time.now();
-        let updated : DocumentMeta = {
-          id = doc.id;
-          name = doc.name;
-          mimeType = doc.mimeType;
+        let pending : PendingVersion = {
+          version = newVersion;
           size = size;
-          owner = doc.owner;
-          createdAt = doc.createdAt;
-          updatedAt = now;
-          isEncrypted = doc.isEncrypted;
-          summary = null;
           totalChunks = totalChunks;
-          version = ?newVersion;
-          certifiedHash = null;
+          startedAt = Time.now();
         };
-        // Clear old chunks
-        var i : Nat = 0;
-        while (i < doc.totalChunks) {
-          chunks.delete(chunkKey(docId, i));
-          i += 1;
-        };
-        encryptedSummaries.delete(docId);
-        documents.put(docId, updated);
-        logActivity(#upload, caller, docId, doc.name, null);
+        pendingVersions.put(docId, pending);
         #ok(newVersion)
       };
       case null #err("Document not found");
@@ -685,20 +745,7 @@ actor DocuCollab {
     };
   };
 
-  // ===== DOCUMENT INTEGRITY (Certified Data) =====
-
-  func computeDocHash(docId : DocumentId, totalChunks : Nat) : Blob {
-    let digest = Sha256.Digest(#sha256);
-    var i : Nat = 0;
-    while (i < totalChunks) {
-      switch (chunks.get(chunkKey(docId, i))) {
-        case (?data) { digest.writeIter(data.vals()) };
-        case null {};
-      };
-      i += 1;
-    };
-    digest.sum()
-  };
+  // ===== DOCUMENT INTEGRITY =====
 
   public shared(msg) func finalizeDocument(docId : DocumentId) : async Result.Result<Blob, Text> {
     let caller = msg.caller;
@@ -707,24 +754,76 @@ actor DocuCollab {
         if (not Principal.equal(doc.owner, caller)) {
           return #err("Only the owner can finalize documents");
         };
-        let hash = computeDocHash(docId, doc.totalChunks);
-        CertifiedData.set(hash);
-        let updated : DocumentMeta = {
-          id = doc.id;
-          name = doc.name;
-          mimeType = doc.mimeType;
-          size = doc.size;
-          owner = doc.owner;
-          createdAt = doc.createdAt;
-          updatedAt = doc.updatedAt;
-          isEncrypted = doc.isEncrypted;
-          summary = doc.summary;
-          totalChunks = doc.totalChunks;
-          version = doc.version;
-          certifiedHash = ?hash;
-        };
-        documents.put(docId, updated);
-        #ok(hash)
+        switch (pendingVersions.get(docId)) {
+          case (?pending) {
+            switch (computeDocHash(docId, pending.totalChunks, true)) {
+              case (?hash) {
+                addVersionHistory(docId, doc);
+                var oldIndex : Nat = 0;
+                while (oldIndex < doc.totalChunks) {
+                  chunks.delete(chunkKey(docId, oldIndex));
+                  oldIndex += 1;
+                };
+                var newIndex : Nat = 0;
+                while (newIndex < pending.totalChunks) {
+                  switch (chunks.get(pendingChunkKey(docId, newIndex))) {
+                    case (?data) {
+                      chunks.put(chunkKey(docId, newIndex), data);
+                      chunks.delete(pendingChunkKey(docId, newIndex));
+                    };
+                    case null {};
+                  };
+                  newIndex += 1;
+                };
+                encryptedSummaries.delete(docId);
+                let updated : DocumentMeta = {
+                  id = doc.id;
+                  name = doc.name;
+                  mimeType = doc.mimeType;
+                  size = pending.size;
+                  owner = doc.owner;
+                  createdAt = doc.createdAt;
+                  updatedAt = Time.now();
+                  isEncrypted = doc.isEncrypted;
+                  summary = null;
+                  totalChunks = pending.totalChunks;
+                  version = ?pending.version;
+                  certifiedHash = ?hash;
+                };
+                documents.put(docId, updated);
+                pendingVersions.delete(docId);
+                CertifiedData.set(hash);
+                logActivity(#upload, caller, docId, doc.name, null);
+                #ok(hash)
+              };
+              case null #err("Cannot finalize: pending version is missing one or more chunks");
+            }
+          };
+          case null {
+            switch (computeDocHash(docId, doc.totalChunks, false)) {
+              case (?hash) {
+                CertifiedData.set(hash);
+                let updated : DocumentMeta = {
+                  id = doc.id;
+                  name = doc.name;
+                  mimeType = doc.mimeType;
+                  size = doc.size;
+                  owner = doc.owner;
+                  createdAt = doc.createdAt;
+                  updatedAt = doc.updatedAt;
+                  isEncrypted = doc.isEncrypted;
+                  summary = doc.summary;
+                  totalChunks = doc.totalChunks;
+                  version = doc.version;
+                  certifiedHash = ?hash;
+                };
+                documents.put(docId, updated);
+                #ok(hash)
+              };
+              case null #err("Cannot finalize: document is missing one or more chunks");
+            }
+          };
+        }
       };
       case null #err("Document not found");
     };
@@ -738,7 +837,7 @@ actor DocuCollab {
       case (?doc) {
         switch (doc.certifiedHash) {
           case (?hash) {
-            #ok({ hash = hash; certificate = CertifiedData.getCertificate() })
+            #ok({ hash = hash; certificate = null })
           };
           case null #err("Document not yet finalized");
         };

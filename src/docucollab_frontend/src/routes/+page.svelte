@@ -1,7 +1,7 @@
 <script>
   import { isAuthenticated, documents, sharedDocuments, userProfile, isLoading, notify } from "$lib/stores/app";
   import { getBackend, getPrincipal } from "$lib/services/auth";
-  import { generateKeyPair, exportPublicKey, savePrivateKey, hasPrivateKey, exportRecoveryKey, importRecoveryKey } from "$lib/services/crypto";
+  import { generateKeyPair, exportPublicKey, savePrivateKey, hasPrivateKey } from "$lib/services/crypto";
   import FileUpload from "$lib/components/FileUpload.svelte";
   import DocumentList from "$lib/components/DocumentList.svelte";
   import DocumentView from "$lib/components/DocumentView.svelte";
@@ -70,36 +70,6 @@
       }
     } catch (e) {
       notify("Registration failed: " + e.message, "error");
-    }
-  }
-
-  async function downloadRecoveryKey() {
-    try {
-      const pkcs8 = await exportRecoveryKey();
-      const blob = new Blob([pkcs8], { type: "application/octet-stream" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "docucollab-recovery-key.bin";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
-      notify("Recovery key downloaded! Keep it safe.", "success");
-    } catch (e) {
-      notify("No recovery key found: " + e.message, "error");
-    }
-  }
-
-  async function uploadRecoveryKey(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    try {
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      await importRecoveryKey(bytes);
-      notify("Recovery key imported successfully!", "success");
-    } catch (e) {
-      notify("Invalid recovery key: " + e.message, "error");
     }
   }
 
@@ -184,12 +154,12 @@
 
           <h1 class="font-display font-bold leading-[1.02] mb-6" style="font-size: clamp(32px, 5vw, 58px); letter-spacing: -0.035em;">
             Your documents,<br />
-            <span class="grad-text">owned by the chain</span><br />
-            — not a company.
+            <span class="grad-text">encrypted on-chain</span><br />
+            — not held by a company.
           </h1>
 
           <p class="text-lg leading-relaxed mb-8 max-w-[520px]" style="color: var(--text-2);">
-            DocuCollab is encrypted document collaboration with on-chain AI and verifiable integrity. No server, no database, no custodian — just your principal and the Internet Computer.
+            DocuCollab is encrypted document collaboration with on-chain AI and canister-computed integrity. No application server, no external database, no document custodian — just your principal and the Internet Computer.
           </p>
 
           <div class="flex flex-wrap gap-3.5 items-center mb-10">
@@ -215,8 +185,8 @@
             </div>
             <div class="w-px" style="background: var(--border);"></div>
             <div>
-              <div class="font-display text-[28px] font-bold" style="letter-spacing: -0.03em;">$0</div>
-              <div class="text-xs font-semibold" style="color: var(--text-3);">Server cost</div>
+              <div class="font-display text-[28px] font-bold" style="letter-spacing: -0.03em;">0</div>
+              <div class="text-xs font-semibold" style="color: var(--text-3);">App servers</div>
             </div>
           </div>
         </div>
@@ -286,7 +256,7 @@
             </div>
 
             <div class="absolute bottom-3.5 left-6 right-6 text-[11px] text-center" style="color: var(--text-4);">
-              No application server — the whole app <span style="color: var(--text-2);">is</span> the chain.
+              No application server — frontend, state, and AI orchestration run from canisters.
             </div>
           </div>
         </div>
@@ -299,7 +269,7 @@
         {#each [
           { icon: "lock", tint: "var(--green)", label: "AES-256 encrypted", desc: "In your browser, before it ever leaves." },
           { icon: "spark", tint: "var(--icp-pink)", label: "On-chain AI", desc: "Summaries & chat via the ICP LLM canister." },
-          { icon: "fingerprint", tint: "var(--icp-cyan)", label: "On-chain integrity", desc: "SHA-256 hashes anyone can verify." },
+          { icon: "fingerprint", tint: "var(--icp-cyan)", label: "On-chain integrity", desc: "Canister hashes your browser can verify." },
           { icon: "globe", tint: "var(--icp-purple)", label: "No server", desc: "Certified assets served from canisters." },
         ] as f}
           <div class="glass fade-in" style="border-radius: var(--r-lg); padding: 20px;">
@@ -417,8 +387,9 @@
       </span>
       <h2 class="font-display text-[26px] font-bold mb-2">Welcome to DocuCollab</h2>
       <p class="text-sm mb-6 leading-relaxed" style="color: var(--text-3);">Pick a username so teammates can find and share with you. We'll generate your encryption keys next.</p>
-      <label class="text-xs font-bold" style="color: var(--text-3); letter-spacing: 0.03em;">USERNAME</label>
+      <label for="register-username" class="text-xs font-bold" style="color: var(--text-3); letter-spacing: 0.03em;">USERNAME</label>
       <input
+        id="register-username"
         type="text"
         bind:value={username}
         placeholder="e.g. lyra.kovac"
@@ -498,13 +469,6 @@
       <FileUpload on:uploaded={loadDocuments} />
     </div>
 
-    <!-- Recovery key + import -->
-    <div class="flex items-center gap-2 mb-5">
-      <button on:click={downloadRecoveryKey} class="btn-ghost px-3 py-2 text-xs flex items-center gap-1.5">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15.5 8.5a4 4 0 1 1-3.9 5l-5.6 5.6H4v-2L9.5 12a4 4 0 0 1 6-3.5z M16.5 8.5h.01" /></svg>
-        Recovery key
-      </button>
-    </div>
 
     <!-- Tabs -->
     <div class="flex gap-1 rounded-xl p-1 mb-4" style="background: var(--surface); border: 1px solid var(--border);">

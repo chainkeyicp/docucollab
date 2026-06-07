@@ -8,6 +8,9 @@ import Int "mo:base/Int";
 import Result "mo:base/Result";
 import Error "mo:base/Error";
 import Principal "mo:base/Principal";
+import HashMap "mo:base/HashMap";
+import Iter "mo:base/Iter";
+import Time "mo:base/Time";
 import Cycles "mo:base/ExperimentalCycles";
 import LLM "mo:llm";
 
@@ -41,11 +44,33 @@ actor DocuCollabAI {
 
   let ic : actor { http_request : HttpRequestArgs -> async HttpResponsePayload } = actor "aaaaa-aa";
 
+  type RateWindow = {
+    startedAt : Int;
+    count : Nat;
+  };
+
+  let BOOTSTRAP_ADMIN : Principal = Principal.fromText("hitz2-x2re7-nstm2-xmor4-yafac-enmkh-z7r2d-odjug-wlstk-mmaj3-7qe");
+  let DEFAULT_ANTHROPIC_URL : Text = "https://api.anthropic.com/v1/messages";
+  let AI_WINDOW_NS : Int = 10 * 60 * 1_000_000_000;
+  let MAX_AI_CALLS_PER_WINDOW : Nat = 20;
+
   stable var apiKey : Text = "";
   stable var apiUrl : Text = "https://api.anthropic.com/v1/messages";
   stable var adminPrincipal : ?Principal = null;
+  stable var stableRateWindows : [(Principal, RateWindow)] = [];
+
+  var rateWindows = HashMap.HashMap<Principal, RateWindow>(64, Principal.equal, Principal.hash);
 
   let MAX_AI_INPUT_CHARS : Nat = 100_000;
+
+  system func preupgrade() {
+    stableRateWindows := Iter.toArray(rateWindows.entries());
+  };
+
+  system func postupgrade() {
+    for ((p, w) in stableRateWindows.vals()) { rateWindows.put(p, w) };
+    stableRateWindows := [];
+  };
 
   // ===== HELPERS =====
 
@@ -66,10 +91,52 @@ actor DocuCollabAI {
     content.size() > MAX_AI_INPUT_CHARS
   };
 
+  func isAdmin(caller : Principal) : Bool {
+    switch (adminPrincipal) {
+      case (?admin) Principal.equal(caller, admin);
+      case null Principal.equal(caller, BOOTSTRAP_ADMIN);
+    }
+  };
+
+  func requireAdmin(caller : Principal) : ?Text {
+    if (Principal.isAnonymous(caller)) return ?"Anonymous callers not allowed";
+    if (isAdmin(caller)) {
+      switch (adminPrincipal) {
+        case (?_) {};
+        case null { adminPrincipal := ?caller };
+      };
+      null
+    } else {
+      ?"Unauthorized"
+    }
+  };
+
+  func guardAiCaller(caller : Principal) : ?Text {
+    if (Principal.isAnonymous(caller)) return ?"Anonymous callers not allowed";
+    let now = Time.now();
+    switch (rateWindows.get(caller)) {
+      case (?window) {
+        if (now - window.startedAt >= AI_WINDOW_NS) {
+          rateWindows.put(caller, { startedAt = now; count = 1 });
+          null
+        } else if (window.count >= MAX_AI_CALLS_PER_WINDOW) {
+          ?"AI rate limit reached. Please try again later."
+        } else {
+          rateWindows.put(caller, { startedAt = window.startedAt; count = window.count + 1 });
+          null
+        }
+      };
+      case null {
+        rateWindows.put(caller, { startedAt = now; count = 1 });
+        null
+      };
+    }
+  };
+
   // ===== ON-CHAIN AI (icp_llm) =====
 
   public shared(msg) func summarizeOnChain(content : Text) : async Result.Result<Text, Text> {
-    if (Principal.isAnonymous(msg.caller)) return #err("Anonymous callers not allowed");
+    switch (guardAiCaller(msg.caller)) { case (?err) return #err(err); case null {} };
     if (isTooLargeForAI(content)) return #err("Document is too large for AI analysis");
     let trimmed = truncateForLLM(content, 8000);
     try {
@@ -84,7 +151,7 @@ actor DocuCollabAI {
   };
 
   public shared(msg) func chatWithDocument(content : Text, question : Text) : async Result.Result<Text, Text> {
-    if (Principal.isAnonymous(msg.caller)) return #err("Anonymous callers not allowed");
+    switch (guardAiCaller(msg.caller)) { case (?err) return #err(err); case null {} };
     if (isTooLargeForAI(content)) return #err("Document is too large for AI analysis");
     let trimmed = truncateForLLM(content, 7000);
     try {
@@ -102,7 +169,7 @@ actor DocuCollabAI {
   };
 
   public shared(msg) func extractKeyPoints(content : Text) : async Result.Result<Text, Text> {
-    if (Principal.isAnonymous(msg.caller)) return #err("Anonymous callers not allowed");
+    switch (guardAiCaller(msg.caller)) { case (?err) return #err(err); case null {} };
     if (isTooLargeForAI(content)) return #err("Document is too large for AI analysis");
     let trimmed = truncateForLLM(content, 8000);
     try {
@@ -117,7 +184,7 @@ actor DocuCollabAI {
   };
 
   public shared(msg) func categorizeDocument(content : Text) : async Result.Result<Text, Text> {
-    if (Principal.isAnonymous(msg.caller)) return #err("Anonymous callers not allowed");
+    switch (guardAiCaller(msg.caller)) { case (?err) return #err(err); case null {} };
     if (isTooLargeForAI(content)) return #err("Document is too large for AI analysis");
     let trimmed = truncateForLLM(content, 4000);
     try {
@@ -138,25 +205,22 @@ actor DocuCollabAI {
   };
 
   public shared(msg) func setApiKey(key : Text) : async Result.Result<(), Text> {
-    switch (adminPrincipal) {
-      case (?admin) { if (not Principal.equal(msg.caller, admin)) return #err("Unauthorized") };
-      case null { adminPrincipal := ?msg.caller };
-    };
+    switch (requireAdmin(msg.caller)) { case (?err) return #err(err); case null {} };
     apiKey := key;
     #ok()
   };
 
   public shared(msg) func setApiUrl(url : Text) : async Result.Result<(), Text> {
-    switch (adminPrincipal) {
-      case (?admin) { if (not Principal.equal(msg.caller, admin)) return #err("Unauthorized") };
-      case null { adminPrincipal := ?msg.caller };
+    switch (requireAdmin(msg.caller)) { case (?err) return #err(err); case null {} };
+    if (url != DEFAULT_ANTHROPIC_URL) {
+      return #err("Only the default Anthropic messages endpoint is allowed");
     };
     apiUrl := url;
     #ok()
   };
 
   public shared(msg) func summarizeTextPremium(content : Text) : async Result.Result<Text, Text> {
-    if (Principal.isAnonymous(msg.caller)) return #err("Anonymous callers not allowed");
+    switch (requireAdmin(msg.caller)) { case (?err) return #err(err); case null {} };
     if (isTooLargeForAI(content)) return #err("Document is too large for AI analysis");
     if (apiKey == "") return #err("API key not configured");
 
@@ -194,9 +258,20 @@ actor DocuCollabAI {
     };
   };
 
-  // Keep backward compatibility
-  public shared(_msg) func summarizeText(content : Text) : async Result.Result<Text, Text> {
-    await summarizeOnChain(content)
+  // Keep backward compatibility with the frontend declaration name.
+  public shared(msg) func summarizeText(content : Text) : async Result.Result<Text, Text> {
+    switch (guardAiCaller(msg.caller)) { case (?err) return #err(err); case null {} };
+    if (isTooLargeForAI(content)) return #err("Document is too large for AI analysis");
+    let trimmed = truncateForLLM(content, 8000);
+    try {
+      let response = await LLM.prompt(
+        #Llama3_1_8B,
+        "You are a document summarization assistant. Summarize the following document in 2-3 concise paragraphs. Focus on key points and main ideas:\n\n" # trimmed
+      );
+      #ok(response)
+    } catch (e) {
+      #err("On-chain AI error: " # Error.message(e))
+    };
   };
 
   func escapeJson(text : Text) : Text {

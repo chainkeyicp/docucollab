@@ -6,6 +6,14 @@
   import { createEventDispatcher } from "svelte";
 
   const dispatch = createEventDispatcher();
+  const NS_PER_MS = 1_000_000n;
+  const DAY_NS = 24n * 60n * 60n * 1_000_000_000n;
+  const EXPIRY_OPTIONS = [
+    { value: "never", label: "No expiry", ns: 0n },
+    { value: "1d", label: "24 hours", ns: DAY_NS },
+    { value: "7d", label: "7 days", ns: 7n * DAY_NS },
+    { value: "30d", label: "30 days", ns: 30n * DAY_NS },
+  ];
 
   export let doc;
   let principalText = "";
@@ -15,6 +23,13 @@
   let lookupLoading = false;
   let searchMode = "username"; // "principal" or "username"
   let usernameSearch = "";
+  let expiryOption = "never";
+
+  function selectedExpiresAt() {
+    const selected = EXPIRY_OPTIONS.find(option => option.value === expiryOption);
+    if (!selected || selected.ns === 0n) return [];
+    return [BigInt(Date.now()) * NS_PER_MS + selected.ns];
+  }
 
   function validatePrincipal(text) {
     if (!text.trim()) {
@@ -114,7 +129,7 @@
         }
       }
 
-      const result = await backend.shareDocument(doc.id, targetPrincipal, encryptedAesKey, []);
+      const result = await backend.shareDocument(doc.id, targetPrincipal, encryptedAesKey, selectedExpiresAt());
 
       if ("ok" in result) {
         notify(`Shared with ${lookupResult?.username || principalText} — key wrapped to their public key`, "success");
@@ -171,12 +186,13 @@
       </div>
 
       <!-- SHARE WITH -->
-      <label class="text-xs font-bold" style="color: var(--text-3); letter-spacing: 0.03em;">SHARE WITH</label>
+      <label for={searchMode === "username" ? "share-username" : "share-principal"} class="text-xs font-bold" style="color: var(--text-3); letter-spacing: 0.03em;">SHARE WITH</label>
 
       {#if searchMode === "username"}
         <div class="glass flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl mt-2">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-4);"><path d="M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z M21 21l-4.3-4.3" /></svg>
           <input
+            id="share-username"
             bind:value={usernameSearch}
             placeholder="Username..."
             on:keydown={(e) => e.key === "Enter" && searchByUsername()}
@@ -195,6 +211,7 @@
         <div class="glass flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl mt-2">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-4);"><path d="M12 11a2 2 0 0 1 2 2c0 2.5-.5 4.5-1.5 6 M8.5 7.5A5 5 0 0 1 17 11c0 1-.1 2-.3 3 M5.5 11a6.5 6.5 0 0 1 3-5.5 M7 16c.8-1.2 1-2.6 1-3 M12 13c0 3-1 5.5-2.5 7.5" /></svg>
           <input
+            id="share-principal"
             bind:value={principalText}
             placeholder="xxxxx-xxxxx-xxxxx-xxxxx-xxx"
             class="flex-1 bg-transparent border-none outline-none text-[13.5px] font-mono" style="color: var(--text);" />
@@ -209,6 +226,22 @@
       {#if validationError}
         <p class="text-xs mt-2" style="color: var(--red);">{validationError}</p>
       {/if}
+
+      <div class="mt-4">
+        <label for="share-expiry" class="text-xs font-bold" style="color: var(--text-3); letter-spacing: 0.03em;">ACCESS EXPIRES</label>
+        <div class="glass flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl mt-2">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-4);"><path d="M12 8v5l3 2 M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z" /></svg>
+          <select
+            id="share-expiry"
+            bind:value={expiryOption}
+            class="flex-1 bg-transparent border-none outline-none text-[13.5px]"
+            style="color: var(--text);">
+            {#each EXPIRY_OPTIONS as option}
+              <option value={option.value}>{option.label}</option>
+            {/each}
+          </select>
+        </div>
+      </div>
 
       <!-- User match -->
       {#if lookupResult}

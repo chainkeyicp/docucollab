@@ -50,7 +50,7 @@ A decentralized document management platform with encrypted on-chain storage and
 - **Batch operations** -- multi-select, batch delete, batch share
 
 ### AI Summarization & Document Chat
-- Opt-in AI summary generation for AI-readable documents on upload
+- Automatic AI summary generation for AI-readable documents on upload
 - AI summaries are encrypted in the browser with the document key before canister storage
 - Client-side text extraction for TXT/MD/JSON/HTML, PDF, DOCX, CSV, and XLSX before encryption
 - Default AI path uses the ICP LLM canister through `mo:llm`
@@ -64,7 +64,7 @@ A decentralized document management platform with encrypted on-chain storage and
 - Share documents by Principal ID or username search
 - Real-time principal validation with user lookup
 - Owner-only operations (upload, delete, share, revoke)
-- Access expiration support
+- Access expiration support with no-expiry, 24-hour, 7-day, and 30-day share options
 
 ### Document Versioning
 - Upload new versions of existing documents

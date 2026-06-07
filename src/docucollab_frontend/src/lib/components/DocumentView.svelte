@@ -167,6 +167,38 @@
     }
   }
 
+  async function downloadStoredBytes(backend, targetDoc = doc) {
+    const totalChunks = Number(targetDoc.totalChunks);
+    const allChunks = [];
+
+    for (let i = 0; i < totalChunks; i++) {
+      const chunkResult = await backend.downloadChunk(targetDoc.id, i);
+      if ("err" in chunkResult) {
+        throw new Error(`Chunk ${i + 1}/${totalChunks} unavailable: ${chunkResult.err}`);
+      }
+      allChunks.push(new Uint8Array(chunkResult.ok));
+    }
+
+    if (allChunks.length !== totalChunks) {
+      throw new Error(`Expected ${totalChunks} chunks, received ${allChunks.length}`);
+    }
+
+    const combined = new Uint8Array(allChunks.reduce((acc, c) => acc + c.length, 0));
+    let offset = 0;
+    for (const chunk of allChunks) {
+      combined.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return combined;
+  }
+
+  async function hashStoredBytes(backend) {
+    const combined = await downloadStoredBytes(backend, doc);
+    const hashBuffer = await crypto.subtle.digest("SHA-256", combined);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+  }
+
   async function loadDocument() {
     const backend = getBackend();
     if (!backend || !doc) return;
@@ -200,19 +232,7 @@
         if ("ok" in hashResult) docHashHex = hashResult.ok;
       } catch { docHashHex = null; }
 
-      const allChunks = [];
-      for (let i = 0; i < Number(doc.totalChunks); i++) {
-        const chunkResult = await backend.downloadChunk(doc.id, i);
-        if ("ok" in chunkResult) {
-          allChunks.push(chunkResult.ok);
-        }
-      }
-      const combined = new Uint8Array(allChunks.reduce((acc, c) => acc + c.length, 0));
-      let offset = 0;
-      for (const chunk of allChunks) {
-        combined.set(new Uint8Array(chunk), offset);
-        offset += chunk.length;
-      }
+      const combined = await downloadStoredBytes(backend, doc);
 
       let finalData = combined;
       if (doc.isEncrypted) {
@@ -272,19 +292,7 @@
       let finalData = cachedDecryptedData;
 
       if (!finalData) {
-        const chunks = [];
-        for (let i = 0; i < Number(doc.totalChunks); i++) {
-          const result = await backend.downloadChunk(doc.id, i);
-          if ("ok" in result) {
-            chunks.push(result.ok);
-          }
-        }
-        const combined = new Uint8Array(chunks.reduce((acc, c) => acc + c.length, 0));
-        let offset = 0;
-        for (const chunk of chunks) {
-          combined.set(new Uint8Array(chunk), offset);
-          offset += chunk.length;
-        }
+        const combined = await downloadStoredBytes(backend, doc);
 
         finalData = combined;
         if (doc.isEncrypted) {
@@ -366,10 +374,10 @@
         }
       }
 
-      try {
-        await backend.finalizeDocument(doc.id);
-      } catch (e) {
-        console.warn("Finalize warning:", e);
+      const finalizeResult = await backend.finalizeDocument(doc.id);
+      if ("err" in finalizeResult) {
+        notify(`Version finalize failed: ${finalizeResult.err}`, "error");
+        return;
       }
 
       const shouldRefreshSummary = textContent && displayedSummary;
@@ -468,20 +476,7 @@
 
     verifying = true;
     try {
-      const allChunks = [];
-      for (let i = 0; i < Number(doc.totalChunks); i++) {
-        const chunkResult = await backend.downloadChunk(doc.id, i);
-        if ("ok" in chunkResult) allChunks.push(new Uint8Array(chunkResult.ok));
-      }
-      const combined = new Uint8Array(allChunks.reduce((acc, c) => acc + c.length, 0));
-      let offset = 0;
-      for (const chunk of allChunks) {
-        combined.set(chunk, offset);
-        offset += chunk.length;
-      }
-      const hashBuffer = await crypto.subtle.digest("SHA-256", combined);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      const clientHash = hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+      const clientHash = await hashStoredBytes(backend);
 
       if (clientHash === docHashHex) {
         notify("Document integrity verified! SHA-256 hash matches.", "success");
@@ -499,20 +494,7 @@
     const backend = getBackend();
     if (!backend) throw new Error("Backend not available");
 
-    const allChunks = [];
-    for (let i = 0; i < Number(doc.totalChunks); i++) {
-      const chunkResult = await backend.downloadChunk(doc.id, i);
-      if ("ok" in chunkResult) allChunks.push(new Uint8Array(chunkResult.ok));
-    }
-    const combined = new Uint8Array(allChunks.reduce((acc, c) => acc + c.length, 0));
-    let offset = 0;
-    for (const chunk of allChunks) {
-      combined.set(chunk, offset);
-      offset += chunk.length;
-    }
-    const hashBuffer = await crypto.subtle.digest("SHA-256", combined);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    const clientHash = hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+    const clientHash = await hashStoredBytes(backend);
 
     return { clientHash, match: clientHash === docHashHex };
   }
