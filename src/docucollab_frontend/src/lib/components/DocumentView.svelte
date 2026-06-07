@@ -1,7 +1,7 @@
 <script>
   import { getBackend, getAI } from "$lib/services/auth";
-  import { notify, isLoading } from "$lib/stores/app";
-  import { getDocumentKey, saveDocumentKey, encryptDocument, decryptDocument, encryptText, decryptText, decryptKeyWithPrivateKey, getPrivateKey } from "$lib/services/crypto";
+  import { notify, isLoading, userProfile } from "$lib/stores/app";
+  import { getDocumentKey, saveDocumentKey, encryptDocument, decryptDocument, encryptText, decryptText, decryptKeyWithPrivateKey, getPrivateKey, importPublicKey, encryptKeyForRecipient } from "$lib/services/crypto";
   import { describeExtraction, extractTextFromBytes, isAiReadable } from "$lib/services/fileTextExtractors";
   import ShareModal from "./ShareModal.svelte";
   import IntegrityProof from "./IntegrityProof.svelte";
@@ -77,15 +77,30 @@
     const privateKey = await getPrivateKey();
     if (!privateKey) return null;
 
-    let candidates = candidateAccessList || [];
-    if (candidates.length === 0) {
-      const backend = getBackend();
-      if (backend) {
-        const docResult = await backend.getDocument(doc.id);
-        if ("ok" in docResult) {
-          candidates = docResult.ok.accessList;
-          accessList = candidates;
+    const backend = getBackend();
+
+    // Try owner-wrapped key first (for cross-browser recovery)
+    if (backend) {
+      try {
+        const ownerKeyResult = await backend.getOwnerWrappedKey(doc.id);
+        if ("ok" in ownerKeyResult) {
+          const wrappedKey = new Uint8Array(ownerKeyResult.ok);
+          if (wrappedKey.length > 0) {
+            aesKey = await decryptKeyWithPrivateKey(wrappedKey, privateKey);
+            await saveDocumentKey(Number(doc.id), aesKey);
+            return aesKey;
+          }
         }
+      } catch {}
+    }
+
+    // Try recipient access list
+    let candidates = candidateAccessList || [];
+    if (candidates.length === 0 && backend) {
+      const docResult = await backend.getDocument(doc.id);
+      if ("ok" in docResult) {
+        candidates = docResult.ok.accessList;
+        accessList = candidates;
       }
     }
 
@@ -393,7 +408,23 @@
       }
       pendingStarted = false;
 
-      const shouldRefreshSummary = textContent && displayedSummary;
+      // Store owner-wrapped key for new version (cross-browser recovery)
+      if (documentKey) {
+        try {
+          if ($userProfile && $userProfile.publicKey) {
+            const ownerPubKey = await importPublicKey(new Uint8Array($userProfile.publicKey));
+            const wrappedForOwner = await encryptKeyForRecipient(documentKey, ownerPubKey);
+            const wrapResult = await backend.setOwnerWrappedKey(doc.id, wrappedForOwner);
+            if ("err" in wrapResult) throw new Error(wrapResult.err);
+          } else {
+            notify("Warning: owner recovery key could not be stored (public key unavailable).", "warning");
+          }
+        } catch (e) {
+          notify("Warning: failed to store owner recovery key — " + e.message, "warning");
+        }
+      }
+
+      const shouldRefreshSummary = !!textContent;
       let summaryUpdated = false;
       if (shouldRefreshSummary) {
         try {

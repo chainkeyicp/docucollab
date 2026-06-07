@@ -110,6 +110,7 @@ actor DocuCollab {
   stable var stableVersions : [(DocumentId, [VersionInfo])] = [];
   stable var stableEncryptedSummaries : [(DocumentId, EncryptedSummary)] = [];
   stable var stablePendingVersions : [(DocumentId, PendingVersion)] = [];
+  stable var stableOwnerKeys : [(DocumentId, Blob)] = [];
   stable var adminPrincipal : ?Principal = null;
 
   var documents = HashMap.HashMap<DocumentId, DocumentMeta>(16, Nat.equal, func(n : Nat) : Nat32 { Nat32.fromNat(n % 2147483647) });
@@ -121,6 +122,7 @@ actor DocuCollab {
   var versionHistory = HashMap.HashMap<DocumentId, Buffer.Buffer<VersionInfo>>(16, Nat.equal, func(n : Nat) : Nat32 { Nat32.fromNat(n % 2147483647) });
   var encryptedSummaries = HashMap.HashMap<DocumentId, EncryptedSummary>(16, Nat.equal, func(n : Nat) : Nat32 { Nat32.fromNat(n % 2147483647) });
   var pendingVersions = HashMap.HashMap<DocumentId, PendingVersion>(16, Nat.equal, func(n : Nat) : Nat32 { Nat32.fromNat(n % 2147483647) });
+  var ownerWrappedKeys = HashMap.HashMap<DocumentId, Blob>(16, Nat.equal, func(n : Nat) : Nat32 { Nat32.fromNat(n % 2147483647) });
 
   let BOOTSTRAP_ADMIN : Principal = Principal.fromText("hitz2-x2re7-nstm2-xmor4-yafac-enmkh-z7r2d-odjug-wlstk-mmaj3-7qe");
   let MAX_DOCUMENT_SIZE : Nat = 50 * 1024 * 1024;
@@ -146,6 +148,7 @@ actor DocuCollab {
     );
     stableEncryptedSummaries := Iter.toArray(encryptedSummaries.entries());
     stablePendingVersions := Iter.toArray(pendingVersions.entries());
+    stableOwnerKeys := Iter.toArray(ownerWrappedKeys.entries());
   };
 
   system func postupgrade() {
@@ -166,6 +169,7 @@ actor DocuCollab {
     };
     for ((k, v) in stableEncryptedSummaries.vals()) { encryptedSummaries.put(k, v) };
     for ((k, v) in stablePendingVersions.vals()) { pendingVersions.put(k, v) };
+    for ((k, v) in stableOwnerKeys.vals()) { ownerWrappedKeys.put(k, v) };
     stableDocuments := [];
     stableChunks := [];
     stableUsers := [];
@@ -175,6 +179,7 @@ actor DocuCollab {
     stableVersions := [];
     stableEncryptedSummaries := [];
     stablePendingVersions := [];
+    stableOwnerKeys := [];
   };
 
   // ===== HELPERS =====
@@ -318,6 +323,10 @@ actor DocuCollab {
     if (username.size() == 0 or username.size() > MAX_USERNAME_LENGTH) {
       return #err("Username must be between 1 and 32 characters");
     };
+    switch (users.get(caller)) {
+      case (?_) { return #err("User already registered") };
+      case null {};
+    };
     for ((p, profile) in users.entries()) {
       if (profile.username == username and not Principal.equal(p, caller)) {
         return #err("Username is already taken");
@@ -366,6 +375,10 @@ actor DocuCollab {
     let caller = msg.caller;
     if (Principal.isAnonymous(caller)) {
       return #err("Anonymous users cannot create documents");
+    };
+    switch (users.get(caller)) {
+      case null { return #err("Only registered users can create documents") };
+      case (?_) {};
     };
     if (name.size() == 0) {
       return #err("Document name is required");
@@ -583,6 +596,7 @@ actor DocuCollab {
         removeDocFromAllUserDocs(docId);
         logActivity(#delete, caller, docId, doc.name, null);
         encryptedSummaries.delete(docId);
+        ownerWrappedKeys.delete(docId);
         documents.delete(docId);
         #ok()
       };
@@ -641,6 +655,44 @@ actor DocuCollab {
         logActivity(#revoke, caller, docId, doc.name, ?revokeFrom);
         removeDocFromUserDocs(revokeFrom, docId);
         #ok()
+      };
+      case null #err("Document not found");
+    };
+  };
+
+  // ===== OWNER WRAPPED KEY (for cross-browser recovery) =====
+
+  public shared(msg) func setOwnerWrappedKey(docId : DocumentId, wrappedKey : Blob) : async Result.Result<(), Text> {
+    let caller = msg.caller;
+    switch (documents.get(docId)) {
+      case (?doc) {
+        if (not Principal.equal(doc.owner, caller)) {
+          return #err("Only the owner can set the owner wrapped key");
+        };
+        if (wrappedKey.size() == 0) {
+          return #err("Wrapped key cannot be empty");
+        };
+        if (wrappedKey.size() > 512) {
+          return #err("Wrapped key is too large (max 512 bytes for RSA-2048 wrapped AES key)");
+        };
+        ownerWrappedKeys.put(docId, wrappedKey);
+        #ok()
+      };
+      case null #err("Document not found");
+    };
+  };
+
+  public query(msg) func getOwnerWrappedKey(docId : DocumentId) : async Result.Result<Blob, Text> {
+    let caller = msg.caller;
+    switch (documents.get(docId)) {
+      case (?doc) {
+        if (not Principal.equal(doc.owner, caller)) {
+          return #err("Only the owner can retrieve the owner wrapped key");
+        };
+        switch (ownerWrappedKeys.get(docId)) {
+          case (?key) #ok(key);
+          case null #err("No owner wrapped key found");
+        };
       };
       case null #err("Document not found");
     };
@@ -713,6 +765,11 @@ actor DocuCollab {
 
   public shared(msg) func uploadNewVersion(docId : DocumentId, size : Nat, totalChunks : Nat) : async Result.Result<Nat, Text> {
     let caller = msg.caller;
+    if (Principal.isAnonymous(caller)) { return #err("Anonymous users cannot upload versions") };
+    switch (users.get(caller)) {
+      case null { return #err("Only registered users can upload versions") };
+      case (?_) {};
+    };
     switch (documents.get(docId)) {
       case (?doc) {
         if (not Principal.equal(doc.owner, caller)) {
@@ -923,12 +980,11 @@ actor DocuCollab {
   };
 
   public query(msg) func getAllActivities(limit : Nat) : async [ActivityEntry] {
-    switch (adminPrincipal) {
-      case (?admin) {
-        if (not Principal.equal(msg.caller, admin)) return [];
-      };
-      case null return [];
+    let isAdminCaller = switch (adminPrincipal) {
+      case (?admin) Principal.equal(msg.caller, admin);
+      case null Principal.equal(msg.caller, BOOTSTRAP_ADMIN);
     };
+    if (not isAdminCaller) return [];
     let size = activities.size();
     if (size == 0) return [];
     let cap = if (limit == 0 or limit > size) { size } else { limit };

@@ -56,7 +56,9 @@ async function dbGetScoped(key) {
   const scoped = await dbGet(current);
   if (scoped) return scoped;
 
-  if (keyScope !== "legacy") {
+  // Legacy migration for document keys only (not private keys —
+  // private keys require explicit validated import via recovery flow)
+  if (keyScope !== "legacy" && key !== "privateKey") {
     const legacy = await dbGet(key);
     if (legacy) {
       await dbPut(current, legacy);
@@ -238,14 +240,62 @@ export async function exportRecoveryKey() {
   return pkcs8;
 }
 
-export async function importRecoveryKey(pkcs8Bytes) {
-  const privateKey = await crypto.subtle.importKey(
+// Import recovery key into memory only (does NOT persist).
+// Call persistRecoveryKey() after successful validation.
+export async function importRecoveryKeyInMemory(pkcs8Bytes) {
+  return await crypto.subtle.importKey(
     "pkcs8",
     pkcs8Bytes,
     { name: "RSA-OAEP", hash: "SHA-256" },
     true,
     ["unwrapKey"]
   );
+}
+
+// Persist a validated recovery key to IndexedDB.
+export async function persistRecoveryKey(pkcs8Bytes) {
   await dbPutScoped("privateKey", new Uint8Array(pkcs8Bytes));
+}
+
+// Legacy alias — kept for backward compatibility but should not be used for new code.
+export async function importRecoveryKey(pkcs8Bytes) {
+  const privateKey = await importRecoveryKeyInMemory(pkcs8Bytes);
+  await persistRecoveryKey(pkcs8Bytes);
   return privateKey;
+}
+
+// Validate that a private key matches a public key by doing a test wrap/unwrap
+export async function validateKeyPair(publicKeyBytes, privateKey) {
+  try {
+    const pubKey = await importPublicKey(publicKeyBytes);
+    const testKey = await crypto.subtle.generateKey(
+      { name: "AES-GCM", length: 256 },
+      true,
+      ["encrypt", "decrypt"]
+    );
+    const wrapped = await crypto.subtle.wrapKey("raw", testKey, pubKey, { name: "RSA-OAEP" });
+    await crypto.subtle.unwrapKey(
+      "raw",
+      wrapped,
+      privateKey,
+      { name: "RSA-OAEP" },
+      { name: "AES-GCM", length: 256 },
+      true,
+      ["encrypt", "decrypt"]
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Remove stored private key (used when validation fails)
+export async function deletePrivateKey() {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("keys", "readwrite");
+    tx.objectStore("keys").delete(scopedKey("privateKey"));
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
 }

@@ -1,7 +1,8 @@
 <script>
   import { getBackend, getAI } from "$lib/services/auth";
   import { notify, isLoading } from "$lib/stores/app";
-  import { generateDocumentKey, encryptDocument, encryptText, saveDocumentKey } from "$lib/services/crypto";
+  import { generateDocumentKey, encryptDocument, encryptText, saveDocumentKey, encryptKeyForRecipient, importPublicKey } from "$lib/services/crypto";
+  import { userProfile } from "$lib/stores/app";
   import { describeExtraction, extractTextFromBytes, isAiReadable } from "$lib/services/fileTextExtractors";
   import OnChainUploadViz from "./OnChainUploadViz.svelte";
   import { createEventDispatcher } from "svelte";
@@ -108,6 +109,25 @@
 
       // Save AES key in IndexedDB
       await saveDocumentKey(Number(docId), aesKey);
+
+      // Store owner-wrapped AES key in backend for cross-browser recovery
+      if (!$userProfile || !$userProfile.publicKey) {
+        notify("Upload aborted: your public key is not available for key wrapping.", "error");
+        await cleanupCreatedDocument(backend, createdDocId);
+        shouldCleanupDoc = false;
+        return;
+      }
+      try {
+        const ownerPubKey = await importPublicKey(new Uint8Array($userProfile.publicKey));
+        const wrappedForOwner = await encryptKeyForRecipient(aesKey, ownerPubKey);
+        const wrapResult = await backend.setOwnerWrappedKey(docId, wrappedForOwner);
+        if ("err" in wrapResult) throw new Error(wrapResult.err);
+      } catch (e) {
+        notify("Upload aborted: failed to store owner recovery key — " + e.message, "error");
+        await cleanupCreatedDocument(backend, createdDocId);
+        shouldCleanupDoc = false;
+        return;
+      }
 
       // Upload encrypted chunks
       for (let i = 0; i < totalChunks; i++) {

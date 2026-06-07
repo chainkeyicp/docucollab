@@ -1,7 +1,7 @@
 <script>
   import { isAuthenticated, documents, sharedDocuments, userProfile, isLoading, notify } from "$lib/stores/app";
   import { getBackend, getPrincipal } from "$lib/services/auth";
-  import { generateKeyPair, exportPublicKey, savePrivateKey, hasPrivateKey, exportRecoveryKey, importRecoveryKey } from "$lib/services/crypto";
+  import { generateKeyPair, exportPublicKey, savePrivateKey, hasPrivateKey, exportRecoveryKey, importRecoveryKeyInMemory, persistRecoveryKey, validateKeyPair, getDocumentKey, importPublicKey, encryptKeyForRecipient } from "$lib/services/crypto";
   import FileUpload from "$lib/components/FileUpload.svelte";
   import DocumentList from "$lib/components/DocumentList.svelte";
   import DocumentView from "$lib/components/DocumentView.svelte";
@@ -18,6 +18,7 @@
   let batchShareIndex = 0;
   let hasLocalPrivateKey = false;
   let recoveryFileInput;
+  let registering = false;
 
   import { onMount } from "svelte";
 
@@ -54,16 +55,18 @@
   }
 
   async function registerUser() {
-    if (!username.trim()) return;
+    if (!username.trim() || registering) return;
     const backend = getBackend();
     if (!backend) return;
+    registering = true;
     try {
       const keyPair = await generateKeyPair();
       const publicKeyBytes = await exportPublicKey(keyPair.publicKey);
-      await savePrivateKey(keyPair.privateKey);
 
       const result = await backend.registerUser(username.trim(), publicKeyBytes);
       if ("ok" in result) {
+        // Persist private key only after backend confirms registration
+        await savePrivateKey(keyPair.privateKey);
         $userProfile = result.ok;
         hasLocalPrivateKey = true;
         showRegister = false;
@@ -74,6 +77,8 @@
       }
     } catch (e) {
       notify("Registration failed: " + e.message, "error");
+    } finally {
+      registering = false;
     }
   }
 
@@ -101,9 +106,24 @@
     if (!file) return;
     try {
       const keyBytes = new Uint8Array(await file.arrayBuffer());
-      await importRecoveryKey(keyBytes);
+
+      // Import into memory only — do NOT persist yet
+      const importedKey = await importRecoveryKeyInMemory(keyBytes);
+
+      // Validate imported key matches the backend public key
+      if ($userProfile && $userProfile.publicKey) {
+        const pubKeyBytes = new Uint8Array($userProfile.publicKey);
+        const valid = await validateKeyPair(pubKeyBytes, importedKey);
+        if (!valid) {
+          notify("Recovery key does not match your registered public key.", "error");
+          return;
+        }
+      }
+
+      // Validation passed — now persist
+      await persistRecoveryKey(keyBytes);
       hasLocalPrivateKey = await hasPrivateKey();
-      notify("Recovery key imported.", "success");
+      notify("Recovery key imported and validated.", "success");
     } catch (err) {
       notify("Recovery key import failed: " + err.message, "error");
     } finally {
@@ -124,6 +144,42 @@
       console.error("Load error:", e);
     } finally {
       $isLoading = false;
+    }
+  }
+
+  let backfilling = false;
+
+  async function backfillOwnerKeys() {
+    const backend = getBackend();
+    if (!backend || !$userProfile || !$userProfile.publicKey) return;
+    backfilling = true;
+    let backfilled = 0, alreadyHad = 0, skippedNoKey = 0, failed = 0;
+    try {
+      const ownerPubKey = await importPublicKey(new Uint8Array($userProfile.publicKey));
+      for (const doc of $documents) {
+        const localKey = await getDocumentKey(Number(doc.id));
+        if (!localKey) { skippedNoKey++; continue; }
+        try {
+          const existing = await backend.getOwnerWrappedKey(doc.id);
+          if ("ok" in existing) { alreadyHad++; continue; }
+        } catch {}
+        try {
+          const wrapped = await encryptKeyForRecipient(localKey, ownerPubKey);
+          const r = await backend.setOwnerWrappedKey(doc.id, wrapped);
+          if ("ok" in r) backfilled++; else failed++;
+        } catch { failed++; }
+      }
+      const parts = [];
+      if (backfilled > 0) parts.push(`${backfilled} backfilled`);
+      if (alreadyHad > 0) parts.push(`${alreadyHad} already had keys`);
+      if (skippedNoKey > 0) parts.push(`${skippedNoKey} skipped (no local key)`);
+      if (failed > 0) parts.push(`${failed} failed`);
+      const level = failed > 0 || skippedNoKey > 0 ? "warning" : "success";
+      notify(`Recovery keys: ${parts.join(", ")}.`, level);
+    } catch (e) {
+      notify("Backfill failed: " + e.message, "error");
+    } finally {
+      backfilling = false;
     }
   }
 
@@ -437,9 +493,9 @@
       />
       <button on:click={registerUser}
         class="btn-grad w-full py-3.5 text-[15px]"
-        style="opacity: {username.trim() ? 1 : 0.5};"
-        disabled={!username.trim()}>
-        Generate keys & continue
+        style="opacity: {username.trim() && !registering ? 1 : 0.5};"
+        disabled={!username.trim() || registering}>
+        {registering ? "Generating keys..." : "Generate keys & continue"}
       </button>
     </div>
   </div>
@@ -507,6 +563,13 @@
           style="color: var(--text-2);" title="Import recovery key">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-4);"><path d="M12 21V9 M7 14l5-5 5 5 M5 3h14" /></svg>
           Import key
+        </button>
+        <button on:click={backfillOwnerKeys}
+          disabled={backfilling || !hasLocalPrivateKey || $documents.length === 0}
+          class="glass inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-[12.5px] font-semibold transition-all hover:border-[var(--border-hi)]"
+          style="color: var(--text-2); opacity: {hasLocalPrivateKey && $documents.length > 0 && !backfilling ? 1 : 0.45};" title="Store recovery keys for existing documents">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-4);"><path d="M5 11h14a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1z M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+          {backfilling ? "Backfilling..." : "Backfill keys"}
         </button>
         <button on:click={() => copyText(getPrincipal()?.toText() || '')}
           class="glass inline-flex items-center gap-2 px-3 py-1.5 rounded-full font-mono text-[12.5px] transition-all hover:border-[var(--border-hi)]"
