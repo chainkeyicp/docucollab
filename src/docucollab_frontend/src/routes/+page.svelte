@@ -55,7 +55,6 @@
     const backend = getBackend();
     if (!backend) return;
     try {
-      // Generate RSA keypair for E2E encryption
       const keyPair = await generateKeyPair();
       const publicKeyBytes = await exportPublicKey(keyPair.publicKey);
       await savePrivateKey(keyPair.privateKey);
@@ -82,8 +81,10 @@
       const a = document.createElement("a");
       a.href = url;
       a.download = "docucollab-recovery-key.bin";
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
       notify("Recovery key downloaded! Keep it safe.", "success");
     } catch (e) {
       notify("No recovery key found: " + e.message, "error");
@@ -159,231 +160,403 @@
   $: batchShareDoc = showBatchShare && batchShareIndex < batchShareIds.length
     ? $documents.find(d => Number(d.id) === batchShareIds[batchShareIndex])
     : null;
+
+  $: storageBytes = $documents.reduce((sum, d) => sum + Number(d.size), 0);
+  $: storagePct = Math.min(100, storageBytes / (50 * 1024 * 1024) * 100);
+  $: storageLabel = storageBytes < 1024 ? storageBytes + " B"
+    : storageBytes < 1048576 ? (storageBytes / 1024).toFixed(1) + " KB"
+    : (storageBytes / 1048576).toFixed(1) + " MB";
 </script>
 
-<div class="max-w-5xl mx-auto px-4 py-8">
-  {#if !$isAuthenticated}
-    <!-- Landing -->
-    <div class="text-center py-20">
-      <h1 class="text-4xl font-bold text-gray-900 dark:text-white mb-4">
-        Secure Document Collaboration
-      </h1>
-      <p class="text-lg text-gray-600 dark:text-gray-400 mb-8 max-w-2xl mx-auto">
-        Share and collaborate on documents with end-to-end encryption.
-        Powered by the Internet Computer &mdash; canister-hosted core with no application server.
-      </p>
-      <!-- Platform Stats -->
-      <div class="flex flex-wrap justify-center gap-6 mb-8 text-sm text-gray-500">
-        <span><strong class="text-gray-900 dark:text-white">{Number(stats.totalDocuments || 0)}</strong> Documents</span>
-        <span><strong class="text-gray-900 dark:text-white">{Number(stats.totalUsers || 0)}</strong> Users</span>
-      </div>
+{#if !$isAuthenticated}
+  <!-- ====== LANDING PAGE ====== -->
+  <div>
+    <!-- HERO -->
+    <section class="max-w-[1180px] mx-auto px-7 pt-[72px] pb-10">
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-14 items-center">
+        <div class="rise">
+          <!-- badge -->
+          <span class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold mb-6"
+            style="color: var(--icp-cyan); background: color-mix(in srgb, var(--icp-cyan) 14%, transparent); border: 1px solid color-mix(in srgb, var(--icp-cyan) 30%, transparent);">
+            <span class="w-1.5 h-1.5 rounded-full" style="background: var(--green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 25%, transparent);"></span>
+            Built entirely on the Internet Computer
+          </span>
 
-      <div class="flex flex-wrap justify-center gap-3 mb-12">
-        <div class="flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
-          <svg class="w-5 h-5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-          </svg>
-          <span class="text-sm font-medium text-gray-700 dark:text-gray-300">AES-256 Encrypted</span>
-        </div>
-        <div class="flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
-          <svg class="w-5 h-5 text-purple-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-          </svg>
-          <span class="text-sm font-medium text-gray-700 dark:text-gray-300">On-Chain AI</span>
-        </div>
-        <div class="flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
-          <svg class="w-5 h-5 text-blue-500" fill="currentColor" viewBox="0 0 20 20">
-            <path fill-rule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zm11.541 3.708a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
-          </svg>
-          <span class="text-sm font-medium text-gray-700 dark:text-gray-300">On-Chain Hash</span>
-        </div>
-        <div class="flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
-          <svg class="w-5 h-5 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
-          </svg>
-          <span class="text-sm font-medium text-gray-700 dark:text-gray-300">ICP Native</span>
-        </div>
-      </div>
-      <p class="text-sm text-gray-400 mb-16">Login with Internet Identity to get started</p>
+          <h1 class="font-display font-bold leading-[1.02] mb-6" style="font-size: clamp(32px, 5vw, 58px); letter-spacing: -0.035em;">
+            Your documents,<br />
+            <span class="grad-text">owned by the chain</span><br />
+            — not a company.
+          </h1>
 
-      <!-- How it works -->
-      <div class="max-w-3xl mx-auto text-left mb-16">
-        <h2 class="text-2xl font-bold text-gray-900 dark:text-white text-center mb-8">How It Works</h2>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div class="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700">
-            <div class="w-10 h-10 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center text-primary-600 font-bold mb-3">1</div>
-            <h3 class="font-semibold text-gray-900 dark:text-white mb-1">Upload</h3>
-            <p class="text-sm text-gray-500 dark:text-gray-400">Drag & drop any file. It is chunked, encrypted in the browser, and stored in ICP canisters.</p>
-          </div>
-          <div class="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700">
-            <div class="w-10 h-10 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center text-primary-600 font-bold mb-3">2</div>
-            <h3 class="font-semibold text-gray-900 dark:text-white mb-1">AI Analyze</h3>
-            <p class="text-sm text-gray-500 dark:text-gray-400">AI-powered analysis using ICP LLM by default, with optional premium HTTPS outcalls. Chat, summarize, extract key points.</p>
-          </div>
-          <div class="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700">
-            <div class="w-10 h-10 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center text-primary-600 font-bold mb-3">3</div>
-            <h3 class="font-semibold text-gray-900 dark:text-white mb-1">Share</h3>
-            <p class="text-sm text-gray-500 dark:text-gray-400">Share documents with any ICP principal. Access is controlled on-chain with full audit trail.</p>
-          </div>
-        </div>
-      </div>
+          <p class="text-lg leading-relaxed mb-8 max-w-[520px]" style="color: var(--text-2);">
+            DocuCollab is encrypted document collaboration with on-chain AI and verifiable integrity. No server, no database, no custodian — just your principal and the Internet Computer.
+          </p>
 
-      <!-- Why ICP -->
-      <div class="max-w-3xl mx-auto mb-16">
-        <h2 class="text-2xl font-bold text-gray-900 dark:text-white text-center mb-8">Why Internet Computer?</h2>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div class="flex items-start gap-3 bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
-            <span class="text-green-500 mt-0.5">&#10003;</span>
-            <div>
-              <p class="font-medium text-gray-900 dark:text-white text-sm">On-Chain AI (icp_llm)</p>
-              <p class="text-xs text-gray-500">Default summaries and chat use the ICP LLM canister; premium mode is clearly optional</p>
-            </div>
+          <div class="flex flex-wrap gap-3.5 items-center mb-10">
+            <button on:click={() => { import('$lib/services/auth').then(m => m.login().then(() => { $isAuthenticated = true; })); }}
+              class="btn-grad px-6 py-3.5 text-[15.5px] flex items-center gap-2.5">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 11a2 2 0 0 1 2 2c0 2.5-.5 4.5-1.5 6 M8.5 7.5A5 5 0 0 1 17 11c0 1-.1 2-.3 3 M5.5 11a6.5 6.5 0 0 1 3-5.5 M7 16c.8-1.2 1-2.6 1-3 M12 13c0 3-1 5.5-2.5 7.5" />
+              </svg>
+              Login with Internet Identity
+            </button>
           </div>
-          <div class="flex items-start gap-3 bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
-            <span class="text-green-500 mt-0.5">&#10003;</span>
+
+          <!-- stats -->
+          <div class="flex gap-8">
             <div>
-              <p class="font-medium text-gray-900 dark:text-white text-sm">On-Chain Integrity Hashes</p>
-              <p class="text-xs text-gray-500">SHA-256 document hashes are computed in the backend canister and verified by the client</p>
+              <div class="font-display text-[28px] font-bold" style="letter-spacing: -0.03em;">{Number(stats.totalDocuments || 0).toLocaleString()}</div>
+              <div class="text-xs font-semibold" style="color: var(--text-3);">Documents on-chain</div>
             </div>
-          </div>
-          <div class="flex items-start gap-3 bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
-            <span class="text-green-500 mt-0.5">&#10003;</span>
+            <div class="w-px" style="background: var(--border);"></div>
             <div>
-              <p class="font-medium text-gray-900 dark:text-white text-sm">AES-256 + RSA Key Exchange</p>
-              <p class="text-xs text-gray-500">Client-side encryption with secure key wrapping for document sharing</p>
+              <div class="font-display text-[28px] font-bold" style="letter-spacing: -0.03em;">{Number(stats.totalUsers || 0)}</div>
+              <div class="text-xs font-semibold" style="color: var(--text-3);">Principals</div>
             </div>
-          </div>
-          <div class="flex items-start gap-3 bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
-            <span class="text-green-500 mt-0.5">&#10003;</span>
+            <div class="w-px" style="background: var(--border);"></div>
             <div>
-              <p class="font-medium text-gray-900 dark:text-white text-sm">Internet Identity + Optional Outcalls</p>
-              <p class="text-xs text-gray-500">Passwordless auth, canister-hosted UI, and optional direct external API calls</p>
+              <div class="font-display text-[28px] font-bold" style="letter-spacing: -0.03em;">$0</div>
+              <div class="text-xs font-semibold" style="color: var(--text-3);">Server cost</div>
             </div>
           </div>
         </div>
-      </div>
-    </div>
 
-  {:else if showRegister}
-    <!-- Registration -->
-    <div class="max-w-md mx-auto py-20">
-      <h2 class="text-2xl font-bold text-gray-900 dark:text-white mb-2">Welcome!</h2>
-      <p class="text-gray-600 dark:text-gray-400 mb-6">Choose a username to get started.</p>
-      <div class="space-y-4">
-        <input
-          type="text"
-          bind:value={username}
-          placeholder="Your username"
-          class="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500"
-          on:keydown={(e) => e.key === "Enter" && registerUser()}
-        />
-        <button on:click={registerUser}
-          class="w-full px-4 py-3 text-white bg-primary-600 rounded-lg hover:bg-primary-700 font-medium transition">
-          Create Account
-        </button>
-      </div>
-    </div>
+        <!-- Architecture diagram -->
+        <div class="rise hidden lg:block" style="animation-delay: 0.15s;">
+          <div class="glass ring-border relative overflow-hidden" style="border-radius: var(--r-xl); padding: 26px; aspect-ratio: 1 / 0.92;">
+            <div class="flex items-center gap-2 mb-1">
+              <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10.5px] font-semibold"
+                style="color: var(--icp-purple); background: color-mix(in srgb, var(--icp-purple) 14%, transparent); border: 1px solid color-mix(in srgb, var(--icp-purple) 30%, transparent);">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5l8 4.5v9l-8 4.5-8-4.5v-9z M12 2.5v19 M4 7l8 4.5L20 7" /></svg>
+                Live topology
+              </span>
+              <span class="ml-auto text-[11.5px] font-mono" style="color: var(--text-4);">mainnet · ic0.app</span>
+            </div>
 
-  {:else if viewingDoc}
-    <DocumentView doc={viewingDoc} on:close={() => viewingDoc = null} />
+            <!-- SVG connections -->
+            <svg viewBox="0 0 100 100" class="absolute inset-0 w-full h-full pointer-events-none">
+              <defs><linearGradient id="lg" x1="0" y1="0" x2="100" y2="100"><stop stop-color="#7b3fe4" /><stop offset="1" stop-color="#29c5f6" /></linearGradient></defs>
+              <line x1="50" y1="18" x2="20" y2="70" stroke="url(#lg)" stroke-width="0.5" stroke-dasharray="2 3" style="animation: dash-travel 5s linear infinite;" />
+              <line x1="50" y1="18" x2="80" y2="70" stroke="url(#lg)" stroke-width="0.5" stroke-dasharray="2 3" style="animation: dash-travel 6s linear infinite;" />
+              <line x1="20" y1="70" x2="80" y2="70" stroke="url(#lg)" stroke-width="0.5" stroke-dasharray="2 3" style="animation: dash-travel 7s linear infinite;" />
+            </svg>
 
-  {:else}
-    <!-- Dashboard -->
-    <div class="space-y-6">
-      <!-- Stats cards -->
-      <div class="grid grid-cols-1 sm:grid-cols-4 gap-3">
-        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-          <p class="text-xs text-gray-500 mb-1">My Documents</p>
-          <p class="text-2xl font-bold text-gray-900 dark:text-white">{$documents.length}</p>
-        </div>
-        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-          <p class="text-xs text-gray-500 mb-1">Shared With Me</p>
-          <p class="text-2xl font-bold text-gray-900 dark:text-white">{$sharedDocuments.length}</p>
-        </div>
-        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-          <p class="text-xs text-gray-500 mb-1">Platform Users</p>
-          <p class="text-2xl font-bold text-gray-900 dark:text-white">{Number(stats.totalUsers || 0)}</p>
-        </div>
-        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-          <p class="text-xs text-gray-500 mb-1">Storage Used</p>
-          <p class="text-lg font-bold text-gray-900 dark:text-white">{(() => {
-            const bytes = $documents.reduce((sum, d) => sum + Number(d.size), 0);
-            if (bytes < 1024) return bytes + " B";
-            if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
-            return (bytes / 1048576).toFixed(1) + " MB";
-          })()} <span class="text-xs font-normal text-gray-400">/ 50 MB MVP</span></p>
-          <div class="mt-2 w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
-            <div class="bg-primary-500 h-1.5 rounded-full transition-all" style="width: {Math.min(100, $documents.reduce((sum, d) => sum + Number(d.size), 0) / (50 * 1024 * 1024) * 100).toFixed(2)}%"></div>
-          </div>
-        </div>
-      </div>
+            <!-- Nodes -->
+            <div class="absolute inset-0">
+              <!-- Frontend -->
+              <div class="absolute text-center" style="left: 50%; top: 12%; transform: translate(-50%, -50%);">
+                <div class="w-14 h-14 rounded-2xl grid place-items-center mx-auto"
+                  style="background: color-mix(in srgb, #29c5f6 15%, var(--bg-2)); border: 1px solid color-mix(in srgb, #29c5f6 40%, transparent); color: #29c5f6; box-shadow: 0 8px 28px -10px color-mix(in srgb, #29c5f6 70%, transparent);">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M3 12h18 M12 3c2.5 2.5 3.8 5.7 3.8 9S14.5 18.5 12 21 8.2 15.3 8.2 12 9.5 5.5 12 3z" /></svg>
+                </div>
+                <div class="text-xs font-bold font-display mt-2" style="color: var(--text);">Frontend</div>
+                <div class="text-[10px] font-mono" style="color: var(--text-4);">ppfr3...</div>
+              </div>
 
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-        <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Documents</h1>
-        <div class="flex items-center gap-2">
-          <button on:click={downloadRecoveryKey} title="Export recovery key"
-            class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400 hover:text-gray-600 transition">
-            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" /></svg>
-          </button>
-          <button on:click={() => copyText(getPrincipal()?.toText() || '')}
-            class="text-sm text-gray-500 hover:text-primary-600 flex items-center gap-1 transition" title="Click to copy">
-            <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
-            <code class="text-xs bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded select-all truncate max-w-[200px] sm:max-w-none">{getPrincipal()?.toText()}</code>
-          </button>
-        </div>
-      </div>
+              <!-- Backend -->
+              <div class="absolute text-center" style="left: 17%; top: 70%; transform: translate(-50%, -50%);">
+                <div class="w-14 h-14 rounded-2xl grid place-items-center mx-auto"
+                  style="background: color-mix(in srgb, #7b3fe4 15%, var(--bg-2)); border: 1px solid color-mix(in srgb, #7b3fe4 40%, transparent); color: #7b3fe4; box-shadow: 0 8px 28px -10px color-mix(in srgb, #7b3fe4 70%, transparent);">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8c4.4 0 8-1.3 8-3s-3.6-3-8-3-8 1.3-8 3 3.6 3 8 3z M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5 M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" /></svg>
+                </div>
+                <div class="text-xs font-bold font-display mt-2" style="color: var(--text);">Backend</div>
+                <div class="text-[10px] font-mono" style="color: var(--text-4);">piexp...</div>
+              </div>
 
-      <FileUpload on:uploaded={loadDocuments} />
+              <!-- AI Canister -->
+              <div class="absolute text-center" style="left: 83%; top: 70%; transform: translate(-50%, -50%);">
+                <div class="w-14 h-14 rounded-2xl grid place-items-center mx-auto"
+                  style="background: color-mix(in srgb, #e0359a 15%, var(--bg-2)); border: 1px solid color-mix(in srgb, #e0359a 40%, transparent); color: #e0359a; box-shadow: 0 8px 28px -10px color-mix(in srgb, #e0359a 70%, transparent);">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3 M12 18v3 M5.6 5.6l2.1 2.1 M16.3 16.3l2.1 2.1 M3 12h3 M18 12h3 M5.6 18.4l2.1-2.1 M16.3 7.7l2.1-2.1" /></svg>
+                </div>
+                <div class="text-xs font-bold font-display mt-2" style="color: var(--text);">AI Canister</div>
+                <div class="text-[10px] font-mono" style="color: var(--text-4);">pgg2h...</div>
+              </div>
 
-      <!-- Tabs -->
-      <div class="flex gap-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
-        <button
-          on:click={() => activeTab = "my-docs"}
-          class="flex-1 px-4 py-2 text-sm font-medium rounded-md transition
-            {activeTab === 'my-docs' ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm' : 'text-gray-600 dark:text-gray-400 hover:text-gray-900'}">
-          My Documents ({$documents.length})
-        </button>
-        <button
-          on:click={() => activeTab = "shared"}
-          class="flex-1 px-4 py-2 text-sm font-medium rounded-md transition
-            {activeTab === 'shared' ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm' : 'text-gray-600 dark:text-gray-400 hover:text-gray-900'}">
-          Shared With Me ({$sharedDocuments.length})
-        </button>
-      </div>
-
-      {#if $isLoading}
-        <div class="flex justify-center py-12">
-          <div class="w-8 h-8 border-4 border-primary-200 border-t-primary-600 rounded-full animate-spin"></div>
-        </div>
-      {:else if activeTab === "my-docs"}
-        <DocumentList on:view={handleView} on:refresh={loadDocuments} on:batchShare={handleBatchShare} />
-      {:else}
-        {#if $sharedDocuments.length === 0}
-          <div class="text-center py-12 text-gray-400">No documents shared with you yet.</div>
-        {:else}
-          <div class="grid gap-3">
-            {#each $sharedDocuments as doc}
-              <button on:click={() => viewingDoc = doc}
-                class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 hover:shadow-md transition-shadow text-left flex items-center gap-3">
-                <div class="w-10 h-10 rounded-lg bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center">
-                  <svg class="w-5 h-5 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+              <!-- Internet Identity -->
+              <div class="absolute" style="left: 50%; top: 50%; transform: translate(-50%, -50%);">
+                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10.5px] font-semibold"
+                  style="color: var(--green); background: color-mix(in srgb, var(--green) 14%, transparent); border: 1px solid color-mix(in srgb, var(--green) 30%, transparent);">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 11a2 2 0 0 1 2 2c0 2.5-.5 4.5-1.5 6 M8.5 7.5A5 5 0 0 1 17 11c0 1-.1 2-.3 3 M5.5 11a6.5 6.5 0 0 1 3-5.5 M7 16c.8-1.2 1-2.6 1-3 M12 13c0 3-1 5.5-2.5 7.5" />
                   </svg>
-                </div>
+                  Internet Identity
+                </span>
+              </div>
+            </div>
+
+            <div class="absolute bottom-3.5 left-6 right-6 text-[11px] text-center" style="color: var(--text-4);">
+              No application server — the whole app <span style="color: var(--text-2);">is</span> the chain.
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Feature cards -->
+    <section class="max-w-[1180px] mx-auto px-7 pb-7">
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {#each [
+          { icon: "lock", tint: "var(--green)", label: "AES-256 encrypted", desc: "In your browser, before it ever leaves." },
+          { icon: "spark", tint: "var(--icp-pink)", label: "On-chain AI", desc: "Summaries & chat via the ICP LLM canister." },
+          { icon: "fingerprint", tint: "var(--icp-cyan)", label: "On-chain integrity", desc: "SHA-256 hashes anyone can verify." },
+          { icon: "globe", tint: "var(--icp-purple)", label: "No server", desc: "Certified assets served from canisters." },
+        ] as f}
+          <div class="glass fade-in" style="border-radius: var(--r-lg); padding: 20px;">
+            <div class="w-[38px] h-[38px] rounded-[11px] grid place-items-center mb-3.5"
+              style="color: {f.tint}; background: color-mix(in srgb, {f.tint} 14%, transparent); border: 1px solid color-mix(in srgb, {f.tint} 28%, transparent);">
+              {#if f.icon === "lock"}
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 11h14a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1z M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+              {:else if f.icon === "spark"}
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3 M12 18v3 M5.6 5.6l2.1 2.1 M16.3 16.3l2.1 2.1 M3 12h3 M18 12h3 M5.6 18.4l2.1-2.1 M16.3 7.7l2.1-2.1" /></svg>
+              {:else if f.icon === "fingerprint"}
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 11a2 2 0 0 1 2 2c0 2.5-.5 4.5-1.5 6 M8.5 7.5A5 5 0 0 1 17 11c0 1-.1 2-.3 3 M5.5 11a6.5 6.5 0 0 1 3-5.5 M7 16c.8-1.2 1-2.6 1-3 M12 13c0 3-1 5.5-2.5 7.5" /></svg>
+              {:else}
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M3 12h18 M12 3c2.5 2.5 3.8 5.7 3.8 9S14.5 18.5 12 21 8.2 15.3 8.2 12 9.5 5.5 12 3z" /></svg>
+              {/if}
+            </div>
+            <div class="font-bold text-[14.5px] font-display mb-1">{f.label}</div>
+            <div class="text-[12.5px] leading-relaxed" style="color: var(--text-3);">{f.desc}</div>
+          </div>
+        {/each}
+      </div>
+    </section>
+
+    <!-- HOW IT WORKS -->
+    <section class="max-w-[1180px] mx-auto px-7 py-16">
+      <div class="text-center mb-12">
+        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold mb-4"
+          style="color: var(--icp-pink); background: color-mix(in srgb, var(--icp-pink) 14%, transparent); border: 1px solid color-mix(in srgb, var(--icp-pink) 30%, transparent);">
+          How it works
+        </span>
+        <h2 class="font-display text-[38px] font-bold" style="letter-spacing: -0.03em;">Three steps. Zero servers.</h2>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+        {#each [
+          { n: "01", title: "Upload", tint: "#29c5f6", desc: "Drag in any file. It's chunked into 1 MB pieces, encrypted in your browser, and written to ICP canisters.", icon: "upload" },
+          { n: "02", title: "Analyze", tint: "#e0359a", desc: "On-chain AI summarizes, extracts key points, categorizes, and chats with your document — no data leaves the chain by default.", icon: "spark" },
+          { n: "03", title: "Share", tint: "#7b3fe4", desc: "Grant access to any principal or username. The AES key is wrapped to their public key. Every action is on the audit trail.", icon: "share" },
+        ] as s}
+          <div class="glass relative overflow-hidden" style="border-radius: var(--r-xl); padding: 28px;">
+            <div class="absolute -top-2.5 right-3.5 font-display font-bold text-[78px]" style="color: var(--surface-hi); letter-spacing: -0.04em;">{s.n}</div>
+            <div class="w-[50px] h-[50px] rounded-[14px] grid place-items-center mb-4 relative"
+              style="color: {s.tint}; background: color-mix(in srgb, {s.tint} 14%, transparent); border: 1px solid color-mix(in srgb, {s.tint} 30%, transparent);">
+              {#if s.icon === "upload"}
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4 M7 9l5-5 5 5 M5 20h14" /></svg>
+              {:else if s.icon === "spark"}
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3 M12 18v3 M5.6 5.6l2.1 2.1 M16.3 16.3l2.1 2.1 M3 12h3 M18 12h3 M5.6 18.4l2.1-2.1 M16.3 7.7l2.1-2.1" /></svg>
+              {:else}
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M6 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M18 22a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M8.6 13.5l6.8 4 M15.4 6.5l-6.8 4" /></svg>
+              {/if}
+            </div>
+            <h3 class="font-display text-[21px] font-semibold mb-2">{s.title}</h3>
+            <p class="text-sm leading-relaxed" style="color: var(--text-3);">{s.desc}</p>
+          </div>
+        {/each}
+      </div>
+    </section>
+
+    <!-- WHY ICP -->
+    <section class="max-w-[1180px] mx-auto px-7 mb-20">
+      <div class="ring-border relative overflow-hidden" style="border-radius: var(--r-xl); padding: 48px 44px; background: var(--grad-icp-soft);">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-11 items-center">
+          <div>
+            <h2 class="font-display text-[34px] font-bold mb-4 leading-tight" style="letter-spacing: -0.03em;">
+              Why the <span class="grad-text">Internet Computer?</span>
+            </h2>
+            <p class="text-[15.5px] leading-relaxed mb-6" style="color: var(--text-2);">
+              Smart contracts that orchestrate AI and external API calls — with no application server in between. That's a capability unique to ICP, and it's the foundation DocuCollab is built on.
+            </p>
+            <button on:click={() => { import('$lib/services/auth').then(m => m.login().then(() => { $isAuthenticated = true; })); }}
+              class="btn-grad px-5 py-3 text-[14.5px] inline-flex items-center gap-2">
+              Start collaborating
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14 M13 6l6 6-6 6" /></svg>
+            </button>
+          </div>
+          <div class="flex flex-col gap-3">
+            {#each [
+              ["On-chain AI via mo:llm", "Default summaries & chat run in a canister; premium HTTPS outcalls are optional."],
+              ["On-chain integrity hashes", "SHA-256 computed in the backend canister, verifiable by any client."],
+              ["AES-256 + RSA key-wrapping", "Client-side encryption with secure key exchange for sharing."],
+              ["Internet Identity", "Passwordless, principal-based, privacy-preserving auth."],
+            ] as [t, d]}
+              <div class="flex gap-3 items-start rounded-[14px] p-3.5" style="background: var(--surface); border: 1px solid var(--border);">
+                <span class="mt-0.5 flex-shrink-0" style="color: var(--green);">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M8.5 12l2.5 2.5 4.5-5" /></svg>
+                </span>
                 <div>
-                  <p class="font-medium text-gray-900 dark:text-white">{doc.name}</p>
-                  <p class="text-xs text-gray-500">Shared document</p>
+                  <div class="font-bold text-[13.5px] mb-0.5">{t}</div>
+                  <div class="text-[12.5px] leading-relaxed" style="color: var(--text-3);">{d}</div>
                 </div>
-              </button>
+              </div>
             {/each}
           </div>
-        {/if}
-      {/if}
+        </div>
+      </div>
+    </section>
 
+    <!-- Footer -->
+    <footer class="py-7 px-7 text-center text-[12.5px]" style="border-top: 1px solid var(--border); color: var(--text-4);">
+      <div class="flex justify-center mb-2.5">
+        <span class="font-display font-bold text-base" style="color: var(--text);">
+          Docu<span class="grad-text">Collab</span>
+        </span>
+      </div>
+      Decentralized document collaboration · MIT licensed · Running on ICP mainnet
+    </footer>
+  </div>
+
+{:else if showRegister}
+  <!-- ====== REGISTRATION ====== -->
+  <div class="min-h-[calc(100vh-64px)] grid place-items-center p-7">
+    <div class="glass ring-border scale-in" style="border-radius: var(--r-xl); padding: 40px 44px; width: 460px; max-width: 100%;">
+      <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold mb-4"
+        style="color: var(--green); background: color-mix(in srgb, var(--green) 14%, transparent); border: 1px solid color-mix(in srgb, var(--green) 30%, transparent);">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7" /></svg>
+        Authenticated
+      </span>
+      <h2 class="font-display text-[26px] font-bold mb-2">Welcome to DocuCollab</h2>
+      <p class="text-sm mb-6 leading-relaxed" style="color: var(--text-3);">Pick a username so teammates can find and share with you. We'll generate your encryption keys next.</p>
+      <label class="text-xs font-bold" style="color: var(--text-3); letter-spacing: 0.03em;">USERNAME</label>
+      <input
+        type="text"
+        bind:value={username}
+        placeholder="e.g. lyra.kovac"
+        on:keydown={(e) => e.key === "Enter" && registerUser()}
+        class="w-full mt-2 mb-5 px-3.5 py-3 rounded-xl text-[15px] outline-none"
+        style="background: var(--bg-2); border: 1px solid var(--border-hi); color: var(--text);"
+      />
+      <button on:click={registerUser}
+        class="btn-grad w-full py-3.5 text-[15px]"
+        style="opacity: {username.trim() ? 1 : 0.5};"
+        disabled={!username.trim()}>
+        Generate keys & continue
+      </button>
+    </div>
+  </div>
+
+{:else if viewingDoc}
+  <DocumentView doc={viewingDoc} on:close={() => viewingDoc = null} />
+
+{:else}
+  <!-- ====== DASHBOARD ====== -->
+  <div class="max-w-[1080px] mx-auto px-7 pt-8 pb-20">
+    <!-- Stats -->
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3.5 mb-5">
+      <div class="glass rounded-[var(--r-lg)] p-4 relative overflow-hidden" style="background: var(--grad-icp-soft);">
+        <div class="flex justify-between items-start">
+          <span class="text-[12.5px] font-semibold" style="color: var(--text-3);">My Documents</span>
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color: var(--icp-cyan);"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
+        </div>
+        <div class="font-display text-[30px] font-bold mt-3" style="letter-spacing: -0.03em; line-height: 1;">{$documents.length}</div>
+      </div>
+
+      <div class="glass rounded-[var(--r-lg)] p-4">
+        <div class="flex justify-between items-start">
+          <span class="text-[12.5px] font-semibold" style="color: var(--text-3);">Shared with me</span>
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color: var(--icp-purple);"><path d="M9 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z M2.5 20a6.5 6.5 0 0 1 13 0 M16 4.2a4 4 0 0 1 0 7.6 M18 13.5a6.5 6.5 0 0 1 3.5 5.8" /></svg>
+        </div>
+        <div class="font-display text-[30px] font-bold mt-3" style="letter-spacing: -0.03em; line-height: 1;">{$sharedDocuments.length}</div>
+      </div>
+
+      <div class="glass rounded-[var(--r-lg)] p-4">
+        <div class="flex justify-between items-start">
+          <span class="text-[12.5px] font-semibold" style="color: var(--text-3);">Platform users</span>
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color: var(--icp-pink);"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M3 12h18 M12 3c2.5 2.5 3.8 5.7 3.8 9S14.5 18.5 12 21 8.2 15.3 8.2 12 9.5 5.5 12 3z" /></svg>
+        </div>
+        <div class="font-display text-[30px] font-bold mt-3" style="letter-spacing: -0.03em; line-height: 1;">{Number(stats.totalUsers || 0)}</div>
+      </div>
+
+      <div class="glass rounded-[var(--r-lg)] p-4">
+        <div class="flex justify-between items-start">
+          <span class="text-[12.5px] font-semibold" style="color: var(--text-3);">Storage used</span>
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color: var(--green);"><path d="M12 8c4.4 0 8-1.3 8-3s-3.6-3-8-3-8 1.3-8 3 3.6 3 8 3z M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5 M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" /></svg>
+        </div>
+        <div class="font-display text-[21px] font-bold mt-2.5 mb-2">
+          {storageLabel} <span class="text-[11.5px] font-normal" style="color: var(--text-4);">/ 50 MB</span>
+        </div>
+        <div class="h-1.5 rounded-full overflow-hidden" style="background: var(--surface-hi);">
+          <div class="h-full rounded-full transition-all" style="width: {storagePct.toFixed(2)}%; background: var(--grad-icp);"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
+      <h1 class="font-display text-2xl font-bold">Documents</h1>
+      <button on:click={() => copyText(getPrincipal()?.toText() || '')}
+        class="glass inline-flex items-center gap-2 px-3 py-1.5 rounded-full font-mono text-[12.5px] transition-all hover:border-[var(--border-hi)]"
+        style="color: var(--text-2);" title="Click to copy principal">
+        <span class="font-body font-semibold" style="color: var(--text-4);">principal</span>
+        <span>{getPrincipal()?.toText()?.slice(0, 8)}...{getPrincipal()?.toText()?.slice(-5)}</span>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-4);"><path d="M9 9h10a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1z M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" /></svg>
+      </button>
+    </div>
+
+    <!-- Upload -->
+    <div class="mb-5">
+      <FileUpload on:uploaded={loadDocuments} />
+    </div>
+
+    <!-- Recovery key + import -->
+    <div class="flex items-center gap-2 mb-5">
+      <button on:click={downloadRecoveryKey} class="btn-ghost px-3 py-2 text-xs flex items-center gap-1.5">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15.5 8.5a4 4 0 1 1-3.9 5l-5.6 5.6H4v-2L9.5 12a4 4 0 0 1 6-3.5z M16.5 8.5h.01" /></svg>
+        Recovery key
+      </button>
+    </div>
+
+    <!-- Tabs -->
+    <div class="flex gap-1 rounded-xl p-1 mb-4" style="background: var(--surface); border: 1px solid var(--border);">
+      <button
+        on:click={() => activeTab = "my-docs"}
+        class="flex-1 px-4 py-2 rounded-[9px] text-[13.5px] font-semibold transition-all"
+        style="color: {activeTab === 'my-docs' ? 'var(--text)' : 'var(--text-3)'}; background: {activeTab === 'my-docs' ? 'var(--surface-hi)' : 'transparent'};">
+        My Documents <span style="color: var(--text-4);">{$documents.length}</span>
+      </button>
+      <button
+        on:click={() => activeTab = "shared"}
+        class="flex-1 px-4 py-2 rounded-[9px] text-[13.5px] font-semibold transition-all"
+        style="color: {activeTab === 'shared' ? 'var(--text)' : 'var(--text-3)'}; background: {activeTab === 'shared' ? 'var(--surface-hi)' : 'transparent'};">
+        Shared With Me <span style="color: var(--text-4);">{$sharedDocuments.length}</span>
+      </button>
+    </div>
+
+    {#if $isLoading}
+      <div class="flex justify-center py-12">
+        <div class="w-8 h-8 rounded-full border-2 anim-spin" style="border-color: var(--surface); border-top-color: var(--icp-pink);"></div>
+      </div>
+    {:else if activeTab === "my-docs"}
+      <DocumentList on:view={handleView} on:refresh={loadDocuments} on:batchShare={handleBatchShare} />
+    {:else}
+      {#if $sharedDocuments.length === 0}
+        <div class="glass rounded-[var(--r-lg)] py-11 text-center text-sm" style="color: var(--text-4);">No documents shared with you yet.</div>
+      {:else}
+        <div class="flex flex-col gap-2.5">
+          {#each $sharedDocuments as doc}
+            <button on:click={() => viewingDoc = doc}
+              class="glass rounded-[var(--r-md)] p-3.5 flex items-center gap-3.5 cursor-pointer transition-all text-left w-full hover:border-[var(--border-hi)]">
+              <div class="w-[42px] h-[42px] rounded-xl grid place-items-center flex-shrink-0"
+                style="background: color-mix(in srgb, var(--icp-purple) 13%, transparent); border: 1px solid color-mix(in srgb, var(--icp-purple) 26%, transparent); color: var(--icp-purple);">
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M6 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M18 22a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M8.6 13.5l6.8 4 M15.4 6.5l-6.8 4" /></svg>
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="font-semibold text-[14.5px] truncate">{doc.name}</div>
+                <div class="text-xs mt-0.5" style="color: var(--text-3);">Shared document</div>
+              </div>
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-4); flex-shrink: 0;"><path d="M9 6l6 6-6 6" /></svg>
+            </button>
+          {/each}
+        </div>
+      {/if}
+    {/if}
+
+    <!-- Activity -->
+    <div class="mt-9">
       <ActivityLog />
     </div>
-  {/if}
-</div>
+  </div>
+{/if}
 
 {#if showBatchShare && batchShareDoc}
   <ShareModal doc={batchShareDoc} on:close={() => { showBatchShare = false; batchShareIds = []; }} on:shared={onBatchShared} />

@@ -7,7 +7,6 @@ export const sharedDocuments = writable([]);
 export const currentDocument = writable(null);
 export const isLoading = writable(false);
 export const notification = writable(null);
-export const darkMode = writable(false);
 
 export function notify(message, type = "info") {
   notification.set({ message, type });

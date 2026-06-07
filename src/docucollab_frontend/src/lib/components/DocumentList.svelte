@@ -194,15 +194,25 @@
     return (bytes / 1048576).toFixed(1) + " MB";
   }
 
-  function formatDate(nanoseconds) {
+  function relTime(nanoseconds) {
     const ms = Number(nanoseconds) / 1_000_000;
-    return new Date(ms).toLocaleDateString("en-US", {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    const diff = (Date.now() - ms) / 1000;
+    if (diff < 3600) return Math.max(1, Math.floor(diff / 60)) + "m ago";
+    if (diff < 86400) return Math.floor(diff / 3600) + "h ago";
+    if (diff < 86400 * 30) return Math.floor(diff / 86400) + "d ago";
+    return new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  }
+
+  function fileTypeMeta(doc) {
+    const ext = doc.name?.split('.').pop()?.toLowerCase() || '';
+    const mime = doc.mimeType || '';
+    if (ext === 'pdf' || mime.includes('pdf')) return { tint: '#fb6a6a', icon: 'pdf' };
+    if (['png','jpg','jpeg','gif','webp','svg','bmp'].includes(ext) || mime.startsWith('image/')) return { tint: '#19e08a', icon: 'image' };
+    if (['xlsx','xls','csv'].includes(ext) || mime.includes('sheet') || mime.includes('csv')) return { tint: '#19c08a', icon: 'table' };
+    if (['doc','docx'].includes(ext) || mime.includes('word')) return { tint: '#3b82f6', icon: 'doc' };
+    if (['md','markdown'].includes(ext)) return { tint: '#29c5f6', icon: 'doc' };
+    if (['txt','text'].includes(ext) || mime.includes('text/plain')) return { tint: '#9b8bf0', icon: 'doc' };
+    return { tint: '#7c7b90', icon: 'doc' };
   }
 
   async function deleteDoc(docId) {
@@ -250,90 +260,89 @@
 </script>
 
 {#if $documents.length === 0}
-  <div class="text-center py-12">
-    <svg class="w-16 h-16 mx-auto text-gray-300 dark:text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-    </svg>
-    <p class="mt-4 text-gray-500 dark:text-gray-400">No documents yet. Upload your first file!</p>
+  <div class="glass rounded-[var(--r-lg)] py-11 text-center" style="color: var(--text-4);">
+    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mx-auto mb-4 opacity-40"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
+    <p class="text-sm">No documents yet. Upload your first file!</p>
   </div>
 {:else}
-  <div class="flex items-center gap-2 mb-3">
-    <div class="relative flex-1">
-      <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-      </svg>
+  <!-- Search + Controls -->
+  <div class="flex items-center gap-2.5 mb-4 flex-wrap">
+    <div class="glass flex items-center gap-2 px-3 py-2 rounded-[10px] flex-1 min-w-[200px]">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-4);"><path d="M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z M21 21l-4.3-4.3" /></svg>
       <input type="text" bind:value={searchQuery} on:input={() => { aiMatchedIds = null; }}
-        placeholder={aiSearching ? "AI is searching..." : "Search or ask AI..."}
+        placeholder={aiSearching ? "AI is searching..." : "Search name or AI summary..."}
         on:keydown={(e) => { if (e.key === "Enter" && searchQuery.trim()) aiSearch(); }}
-        class="w-full pl-9 pr-10 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent" />
+        class="bg-transparent border-none outline-none text-[13px] w-full" style="color: var(--text);" />
       {#if aiMatchedIds !== null}
-        <button on:click={clearAiSearch} class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600" title="Clear AI search">
-          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+        <button on:click={clearAiSearch} style="color: var(--text-4);" title="Clear AI search">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12 M18 6L6 18" /></svg>
         </button>
       {/if}
     </div>
+
     <button on:click={aiSearch} disabled={aiSearching || !searchQuery.trim()}
-      class="px-3 py-2 text-sm font-medium rounded-lg transition flex items-center gap-1.5
-        {aiMatchedIds !== null ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400 hover:bg-purple-200 dark:hover:bg-purple-900/50'}
-        disabled:opacity-50 disabled:cursor-not-allowed"
-      title="AI-powered semantic search across document summaries">
+      class="btn-ghost px-3 py-2 text-[13px] flex items-center gap-1.5 disabled:opacity-40"
+      style="color: {aiMatchedIds !== null ? 'var(--green)' : 'var(--icp-pink)'};"
+      title="AI-powered semantic search">
       {#if aiSearching}
-        <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+        <div class="w-3.5 h-3.5 rounded-full anim-spin" style="border: 1.5px solid var(--surface-hi); border-top-color: var(--icp-pink);"></div>
       {:else}
-        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M13 2L4.5 13.5H11l-1 8.5L19.5 10H13z" /></svg>
       {/if}
       AI
     </button>
+
     <select bind:value={sortBy}
-      class="px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300">
-      <option value="date">Recent</option>
-      <option value="name">Name</option>
-      <option value="size">Size</option>
+      class="glass px-3 py-2 rounded-[10px] text-[13px] outline-none cursor-pointer" style="color: var(--text-2);">
+      <option value="date" style="background: var(--bg-2);">Recent</option>
+      <option value="name" style="background: var(--bg-2);">Name</option>
+      <option value="size" style="background: var(--bg-2);">Size</option>
     </select>
+
     <button on:click={() => selectMode = !selectMode}
-      class="px-3 py-2 text-sm font-medium rounded-lg transition
-        {selectMode ? 'bg-primary-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'}">
+      class="{selectMode ? 'btn-grad' : 'btn-ghost'} px-3.5 py-2 text-[13px] flex items-center gap-1.5">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7" /></svg>
       Select
     </button>
   </div>
 
+  <!-- AI search results banner -->
   {#if aiMatchedIds !== null}
-    <div class="flex items-center gap-2 mb-3 p-2.5 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
-      <svg class="w-4 h-4 text-purple-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-      <span class="text-sm text-purple-700 dark:text-purple-300 flex-1">
+    <div class="glass scale-in flex items-center gap-2.5 p-3 rounded-xl mb-3.5"
+      style="border-color: color-mix(in srgb, var(--icp-pink) 35%, transparent);">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none" style="color: var(--icp-pink); flex-shrink: 0;"><path d="M13 2L4.5 13.5H11l-1 8.5L19.5 10H13z" /></svg>
+      <span class="text-[13px] flex-1" style="color: var(--text-2);">
         AI found {aiMatchedIds.size} result{aiMatchedIds.size !== 1 ? 's' : ''} for "{searchQuery}"
       </span>
-      <button on:click={clearAiSearch} class="text-xs text-purple-600 hover:text-purple-800 dark:text-purple-400 font-medium">Clear</button>
+      <button on:click={clearAiSearch} class="text-xs font-semibold" style="color: var(--icp-cyan);">Clear</button>
     </div>
   {/if}
 
+  <!-- Batch action bar -->
   {#if selectMode && selectedIds.size > 0}
-    <div class="flex items-center gap-2 mb-3 p-3 bg-primary-50 dark:bg-primary-900/20 rounded-lg border border-primary-200 dark:border-primary-800">
-      <span class="text-sm font-medium text-primary-700 dark:text-primary-300 flex-1">
-        {selectedIds.size} selected
-      </span>
-      <button on:click={batchShare}
-        class="px-3 py-1.5 text-xs font-medium text-primary-700 bg-primary-100 dark:bg-primary-900/40 dark:text-primary-300 rounded-lg hover:bg-primary-200 transition">
-        Share All
-      </button>
-      <button on:click={batchDelete}
-        class="px-3 py-1.5 text-xs font-medium text-red-700 bg-red-100 dark:bg-red-900/30 dark:text-red-400 rounded-lg hover:bg-red-200 transition">
-        Delete All
-      </button>
-      <button on:click={() => { selectedIds = new Set(); selectMode = false; }}
-        class="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-400 hover:text-gray-800 transition">
-        Cancel
-      </button>
+    <div class="glass scale-in flex items-center justify-between p-3 rounded-xl mb-3.5"
+      style="border-color: color-mix(in srgb, var(--icp-pink) 35%, transparent);">
+      <span class="text-[13.5px] font-semibold">{selectedIds.size} selected</span>
+      <div class="flex gap-2.5">
+        <button on:click={batchShare} class="btn-ghost px-3.5 py-1.5 text-[13px] flex items-center gap-1.5">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M6 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M18 22a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M8.6 13.5l6.8 4 M15.4 6.5l-6.8 4" /></svg>
+          Share
+        </button>
+        <button on:click={batchDelete} class="btn-ghost px-3.5 py-1.5 text-[13px] flex items-center gap-1.5" style="color: var(--red);">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16 M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2 M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13 M10 11v6 M14 11v6" /></svg>
+          Delete
+        </button>
+      </div>
     </div>
   {/if}
 
+  <!-- Select all -->
   {#if selectMode}
-    <div class="flex items-center gap-2 mb-2 px-1">
-      <button on:click={toggleAll} class="flex items-center gap-2 text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition">
-        <div class="w-4 h-4 rounded border-2 flex items-center justify-center transition
-          {allSelected ? 'bg-primary-600 border-primary-600' : 'border-gray-300 dark:border-gray-600'}">
+    <div class="flex items-center gap-2 mb-2.5 px-1">
+      <button on:click={toggleAll} class="flex items-center gap-2 text-xs transition" style="color: var(--text-3);">
+        <div class="w-5 h-5 rounded-md grid place-items-center" style="background: {allSelected ? 'var(--grad-icp)' : 'var(--surface-hi)'}; border: 1px solid {allSelected ? 'transparent' : 'var(--border-hi)'}; color: #fff;">
           {#if allSelected}
-            <svg class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7" /></svg>
           {/if}
         </div>
         Select all
@@ -341,65 +350,90 @@
     </div>
   {/if}
 
-  <div class="grid gap-3">
+  <!-- Document list -->
+  <div class="flex flex-col gap-2.5">
     {#each filteredDocs as doc}
-      <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 hover:shadow-md transition-shadow
-        {selectMode && selectedIds.has(Number(doc.id)) ? 'ring-2 ring-primary-500' : ''}">
-        <div class="flex items-center justify-between">
-          {#if selectMode}
-            <button on:click|stopPropagation={() => toggleSelect(doc.id)} class="mr-3 flex-shrink-0">
-              <div class="w-5 h-5 rounded border-2 flex items-center justify-center transition
-                {selectedIds.has(Number(doc.id)) ? 'bg-primary-600 border-primary-600' : 'border-gray-300 dark:border-gray-600'}">
-                {#if selectedIds.has(Number(doc.id))}
-                  <svg class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg>
-                {/if}
-              </div>
-            </button>
-          {/if}
-          <button on:click={() => selectMode ? toggleSelect(doc.id) : viewDoc(doc)} class="flex items-center gap-3 flex-1 text-left">
-            <div class="w-10 h-10 rounded-lg bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center">
-              <svg class="w-5 h-5 text-primary-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-            </div>
-            <div class="min-w-0">
-              <p class="font-medium text-gray-900 dark:text-white truncate">{doc.name}</p>
-              <p class="text-xs text-gray-500 dark:text-gray-400">
-                {formatSize(Number(doc.size))} &middot; {formatDate(doc.updatedAt)}
-              </p>
-            </div>
-          </button>
+      {@const meta = fileTypeMeta(doc)}
+      {@const selected = selectedIds.has(Number(doc.id))}
+      <div
+        on:click={() => selectMode ? toggleSelect(doc.id) : viewDoc(doc)}
+        on:keydown={(e) => e.key === 'Enter' && (selectMode ? toggleSelect(doc.id) : viewDoc(doc))}
+        role="button"
+        tabindex="0"
+        class="glass rounded-[var(--r-md)] p-3.5 flex items-center gap-3.5 cursor-pointer transition-all"
+        style="border-color: {selected ? 'color-mix(in srgb, var(--icp-pink) 45%, transparent)' : 'var(--border)'};
+          background: {selected ? 'color-mix(in srgb, var(--icp-pink) 8%, var(--surface))' : 'var(--surface)'};"
+      >
+        {#if selectMode}
+          <div class="w-5 h-5 rounded-md grid place-items-center flex-shrink-0"
+            style="background: {selected ? 'var(--grad-icp)' : 'var(--surface-hi)'}; border: 1px solid {selected ? 'transparent' : 'var(--border-hi)'}; color: #fff;">
+            {#if selected}
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7" /></svg>
+            {/if}
+          </div>
+        {/if}
 
-          <div class="flex items-center gap-2">
+        <!-- File glyph -->
+        <div class="w-[42px] h-[42px] rounded-xl grid place-items-center flex-shrink-0"
+          style="background: color-mix(in srgb, {meta.tint} 13%, transparent); border: 1px solid color-mix(in srgb, {meta.tint} 26%, transparent); color: {meta.tint};">
+          {#if meta.icon === 'pdf'}
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v4a1 1 0 0 0 1 1h4 M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /></svg>
+          {:else if meta.icon === 'image'}
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z M8.5 10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z M21 16l-5-5L5 21" /></svg>
+          {:else if meta.icon === 'table'}
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z M3 10h18 M3 15h18 M9 5v15 M15 5v15" /></svg>
+          {:else}
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v4a1 1 0 0 0 1 1h4 M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /></svg>
+          {/if}
+        </div>
+
+        <!-- Info -->
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2.5">
+            <span class="font-semibold text-[14.5px] truncate" style="color: var(--text);">{doc.name}</span>
             {#if Number(doc.version || 1) > 1}
-              <span class="px-2 py-1 text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded-full">
-                v{Number(doc.version)}
-              </span>
+              <span class="mono text-[10.5px] font-semibold flex-shrink-0 px-1.5 rounded-full"
+                style="color: var(--icp-cyan); background: color-mix(in srgb, var(--icp-cyan) 12%, transparent);">v{Number(doc.version)}</span>
             {/if}
-            {#if doc.certifiedHash && doc.certifiedHash.length > 0 && doc.certifiedHash[0]}
-              <span class="px-1.5 py-1 text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 rounded-full" title="SHA-256 hash recorded on ICP">
-                <svg class="w-3.5 h-3.5 inline" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zm11.541 3.708a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" /></svg>
-              </span>
-            {/if}
-            {#if summaryFor(doc)}
-              <span class="px-2 py-1 text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 rounded-full">
-                AI Summary
-              </span>
-            {/if}
+          </div>
+          <div class="flex items-center gap-2.5 mt-0.5 text-xs whitespace-nowrap" style="color: var(--text-3);">
+            <span>{formatSize(Number(doc.size))}</span>
+            <span style="color: var(--text-4);">·</span>
+            <span>{relTime(doc.updatedAt)}</span>
             {#if doc.isEncrypted}
-              <svg class="w-4 h-4 text-yellow-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-              </svg>
-            {/if}
-            {#if !selectMode}
-              <button on:click|stopPropagation={() => deleteDoc(doc.id)} class="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 text-gray-400 hover:text-red-500 transition">
-                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
-              </button>
+              <span style="color: var(--text-4);">·</span>
+              <span class="inline-flex items-center gap-1" style="color: var(--green);">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 11h14a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1z M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+                encrypted
+              </span>
             {/if}
           </div>
         </div>
+
+        <!-- Badges -->
+        <div class="flex items-center gap-2 flex-shrink-0">
+          {#if summaryFor(doc)}
+            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-semibold"
+              style="color: var(--icp-pink); background: color-mix(in srgb, var(--icp-pink) 12%, transparent);">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v3 M12 18v3 M5.6 5.6l2.1 2.1 M16.3 16.3l2.1 2.1 M3 12h3 M18 12h3 M5.6 18.4l2.1-2.1 M16.3 7.7l2.1-2.1" /></svg>
+              AI
+            </span>
+          {/if}
+          {#if doc.certifiedHash && doc.certifiedHash.length > 0 && doc.certifiedHash[0]}
+            <span class="grid place-items-center" style="color: var(--green);" title="SHA-256 hash verified">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8.3-7 9.5C8 19.3 5 15.5 5 11V6z M9 11.5l2 2 4-4" /></svg>
+            </span>
+          {/if}
+        </div>
+
+        {#if !selectMode}
+          <button on:click|stopPropagation={() => deleteDoc(doc.id)}
+            class="p-1.5 rounded-lg transition opacity-40 hover:opacity-100 flex-shrink-0" style="color: var(--red);"
+            title="Delete document">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16 M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2 M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13 M10 11v6 M14 11v6" /></svg>
+          </button>
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="flex-shrink-0" style="color: var(--text-4);"><path d="M9 6l6 6-6 6" /></svg>
+        {/if}
       </div>
     {/each}
   </div>

@@ -4,6 +4,7 @@
   import { getDocumentKey, saveDocumentKey, encryptDocument, decryptDocument, encryptText, decryptText, decryptKeyWithPrivateKey, getPrivateKey } from "$lib/services/crypto";
   import { describeExtraction, extractTextFromBytes, isAiReadable } from "$lib/services/fileTextExtractors";
   import ShareModal from "./ShareModal.svelte";
+  import IntegrityProof from "./IntegrityProof.svelte";
   import { createEventDispatcher, onDestroy } from "svelte";
 
   const dispatch = createEventDispatcher();
@@ -31,11 +32,15 @@
   let chatLoading = false;
   let keyPoints = null;
   let category = null;
-  let aiMode = "onchain"; // "onchain" or "premium"
+  let aiMode = "onchain";
 
   // Integrity
   let docHashHex = null;
   let verifying = false;
+  let showIntegrityProof = false;
+
+  // Tabs
+  let leftTab = "preview"; // "preview" or "details"
 
   $: if (doc) loadDocument();
   $: legacySummary = doc?.summary && doc.summary.length > 0 && doc.summary[0] ? doc.summary[0] : null;
@@ -45,6 +50,24 @@
     if (imageUrl) URL.revokeObjectURL(imageUrl);
     if (pdfUrl) URL.revokeObjectURL(pdfUrl);
   });
+
+  // --- file type glyph ---
+  function fileTypeMeta(name, mime) {
+    const ext = (name || "").split(".").pop().toLowerCase();
+    if (["jpg","jpeg","png","gif","svg","webp","bmp"].includes(ext) || (mime && mime.startsWith("image/")))
+      return { color: "var(--green)", label: "Image", icon: "image" };
+    if (ext === "pdf" || mime === "application/pdf")
+      return { color: "#fb6a6a", label: "PDF", icon: "doc" };
+    if (["doc","docx"].includes(ext)) return { color: "var(--icp-blue)", label: "Word", icon: "doc" };
+    if (["xls","xlsx","csv"].includes(ext)) return { color: "var(--green)", label: "Spreadsheet", icon: "doc" };
+    if (["ppt","pptx"].includes(ext)) return { color: "var(--amber)", label: "Presentation", icon: "doc" };
+    if (["txt","md","json","xml","yaml","yml","toml"].includes(ext)) return { color: "var(--icp-cyan)", label: "Text", icon: "doc" };
+    if (["js","ts","py","rs","go","sol","mo","java","c","cpp","h"].includes(ext)) return { color: "var(--icp-purple)", label: "Code", icon: "code" };
+    if (["zip","tar","gz","rar","7z"].includes(ext)) return { color: "var(--amber)", label: "Archive", icon: "archive" };
+    return { color: "var(--text-3)", label: mime || "File", icon: "doc" };
+  }
+
+  $: fileMeta = fileTypeMeta(doc?.name, doc?.mimeType);
 
   async function resolveDocumentKey(candidateAccessList = accessList) {
     let aesKey = await getDocumentKey(Number(doc.id));
@@ -154,7 +177,6 @@
       const result = await backend.getDocument(doc.id);
       if ("ok" in result) {
         accessList = result.ok.accessList;
-        // Resolve usernames
         for (const acc of accessList) {
           const pid = acc.grantedTo.toText();
           if (!usernames[pid]) {
@@ -164,23 +186,20 @@
             } catch {}
           }
         }
-        usernames = usernames; // trigger reactivity
+        usernames = usernames;
       }
 
       await loadEncryptedSummary(accessList);
 
-      // Load version history
       try {
         versions = await backend.getVersions(doc.id);
       } catch { versions = []; }
 
-      // Load document hash
       try {
         const hashResult = await backend.getDocumentHashHex(doc.id);
         if ("ok" in hashResult) docHashHex = hashResult.ok;
       } catch { docHashHex = null; }
 
-      // Load and preview content based on file type
       const allChunks = [];
       for (let i = 0; i < Number(doc.totalChunks); i++) {
         const chunkResult = await backend.downloadChunk(doc.id, i);
@@ -195,7 +214,6 @@
         offset += chunk.length;
       }
 
-      // Decrypt if encrypted
       let finalData = combined;
       if (doc.isEncrypted) {
         try {
@@ -450,7 +468,6 @@
 
     verifying = true;
     try {
-      // Download all chunks and compute SHA-256 client-side
       const allChunks = [];
       for (let i = 0; i < Number(doc.totalChunks); i++) {
         const chunkResult = await backend.downloadChunk(doc.id, i);
@@ -478,6 +495,28 @@
     }
   }
 
+  async function verifyIntegrityForProof() {
+    const backend = getBackend();
+    if (!backend) throw new Error("Backend not available");
+
+    const allChunks = [];
+    for (let i = 0; i < Number(doc.totalChunks); i++) {
+      const chunkResult = await backend.downloadChunk(doc.id, i);
+      if ("ok" in chunkResult) allChunks.push(new Uint8Array(chunkResult.ok));
+    }
+    const combined = new Uint8Array(allChunks.reduce((acc, c) => acc + c.length, 0));
+    let offset = 0;
+    for (const chunk of allChunks) {
+      combined.set(chunk, offset);
+      offset += chunk.length;
+    }
+    const hashBuffer = await crypto.subtle.digest("SHA-256", combined);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const clientHash = hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+
+    return { clientHash, match: clientHash === docHashHex };
+  }
+
   async function regenerateSummary() {
     if (!aiDocumentContent) return;
     const ai = getAI();
@@ -486,9 +525,7 @@
 
     chatLoading = true;
     try {
-      const result = aiMode === "premium"
-        ? await ai.summarizeTextPremium(aiDocumentContent)
-        : await ai.summarizeOnChain(aiDocumentContent);
+      const result = await ai.summarizeOnChain(aiDocumentContent);
       if ("ok" in result) {
         await saveEncryptedSummaryText(result.ok);
         notify("Summary regenerated!", "success");
@@ -510,10 +547,20 @@
     });
   }
 
+  function relTime(nanoseconds) {
+    const ms = Number(nanoseconds) / 1_000_000;
+    const diff = (Date.now() - ms) / 1000;
+    if (diff < 3600) return Math.max(1, Math.floor(diff / 60)) + "m ago";
+    if (diff < 86400) return Math.floor(diff / 3600) + "h ago";
+    if (diff < 86400 * 30) return Math.floor(diff / 86400) + "d ago";
+    return new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  }
+
   function formatSize(bytes) {
-    if (bytes < 1024) return bytes + " B";
-    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
-    return (bytes / 1048576).toFixed(1) + " MB";
+    const b = Number(bytes);
+    if (b < 1024) return b + " B";
+    if (b < 1048576) return (b / 1024).toFixed(1) + " KB";
+    return (b / 1048576).toFixed(1) + " MB";
   }
 
   function close() {
@@ -521,237 +568,374 @@
   }
 </script>
 
-<div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+<div style="max-width: 1140px; margin: 0 auto; padding: 24px 28px 80px; position: relative; z-index: 2;">
   <!-- Header -->
-  <div class="border-b border-gray-200 dark:border-gray-700 p-4 flex items-center justify-between">
-    <div class="flex items-center gap-3">
-      <button on:click={close} class="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700">
-        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-        </svg>
+  <div class="flex items-center justify-between mb-[18px] gap-3.5 flex-wrap">
+    <div class="flex items-center gap-3.5 min-w-0">
+      <button on:click={close} class="btn-ghost w-[38px] h-[38px] rounded-[11px] grid place-items-center p-0 flex-shrink-0">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
-      <div>
-        <h2 class="font-semibold text-gray-900 dark:text-white">{doc.name}</h2>
-        <p class="text-xs text-gray-500">{formatSize(Number(doc.size))} &middot; {formatDate(doc.updatedAt)}</p>
+      <!-- FileGlyph -->
+      <div class="w-[46px] h-[46px] rounded-[14px] grid place-items-center flex-shrink-0"
+        style="color: {fileMeta.color}; background: color-mix(in srgb, {fileMeta.color} 13%, transparent); border: 1px solid color-mix(in srgb, {fileMeta.color} 26%, transparent);">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v4a1 1 0 0 0 1 1h4 M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/></svg>
+      </div>
+      <div class="min-w-0">
+        <div class="flex items-center gap-2.5">
+          <h1 class="font-display text-[19px] font-semibold truncate max-w-[460px]">{doc.name}</h1>
+          {#if Number(doc.version || 1) > 1}
+            <span class="mono text-[11px] font-semibold px-2 py-0.5 rounded-full"
+              style="color: var(--icp-cyan); background: color-mix(in srgb, var(--icp-cyan) 12%, transparent);">v{Number(doc.version || 1)}</span>
+          {/if}
+        </div>
+        <div class="text-[12.5px] mt-0.5" style="color: var(--text-3);">
+          {formatSize(doc.size)} · {fileMeta.label} · updated {relTime(doc.updatedAt)}
+        </div>
       </div>
     </div>
-    <div class="flex items-center gap-2">
+    <div class="flex gap-2.5 flex-shrink-0">
       <input type="file" bind:this={versionFileInput} on:change={uploadNewVersion} class="hidden" />
       <button on:click={() => versionFileInput.click()}
-        class="px-3 py-1.5 text-sm font-medium text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition">
+        class="btn-ghost px-[15px] py-[9px] text-[13px] flex items-center gap-[7px]">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9 M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4z"/></svg>
         Update
       </button>
       <button on:click={() => showShareModal = true}
-        class="px-3 py-1.5 text-sm font-medium text-primary-600 bg-primary-50 dark:bg-primary-900/20 rounded-lg hover:bg-primary-100 dark:hover:bg-primary-900/40 transition">
+        class="btn-ghost px-[15px] py-[9px] text-[13px] flex items-center gap-[7px]">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M6 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M18 22a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M8.6 13.5l6.8 4 M15.4 6.5l-6.8 4"/></svg>
         Share
       </button>
       <button on:click={downloadFile}
-        class="px-3 py-1.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition">
+        class="btn-grad px-[16px] py-[9px] text-[13px] flex items-center gap-[7px]">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12 M7 11l5 5 5-5 M5 20h14"/></svg>
         Download
       </button>
     </div>
   </div>
 
-  <div class="grid grid-cols-1 lg:grid-cols-3 divide-y lg:divide-y-0 lg:divide-x divide-gray-200 dark:divide-gray-700">
-    <!-- Content -->
-    <div class="lg:col-span-2 p-4 min-h-[200px] sm:min-h-[300px] max-h-[400px] sm:max-h-[600px] overflow-auto">
-      {#if textPreviewContent !== null}
-        <pre class="text-sm text-gray-800 dark:text-gray-200 whitespace-pre-wrap font-mono">{textPreviewContent}</pre>
-      {:else if imageUrl}
-        <div class="flex items-center justify-center h-full">
-          <img src={imageUrl} alt={doc.name} class="max-w-full max-h-[580px] rounded-lg object-contain" />
+  <!-- 2-column layout -->
+  <div class="grid grid-cols-1 lg:grid-cols-[1.55fr_1fr] gap-[18px] items-start">
+    <!-- LEFT: Preview + Details -->
+    <div class="glass rounded-[var(--r-lg)] overflow-hidden" style="min-height: 560px;">
+      <!-- Tab bar -->
+      <div class="flex" style="border-bottom: 1px solid var(--border); padding: 0 8px;">
+        <button on:click={() => leftTab = "preview"}
+          class="px-4 py-3.5 text-[13px] font-semibold flex items-center gap-[7px]"
+          style="color: {leftTab === 'preview' ? 'var(--text)' : 'var(--text-3)'}; border-bottom: 2px solid {leftTab === 'preview' ? 'var(--icp-pink)' : 'transparent'}; margin-bottom: -1px;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></svg>
+          Preview
+        </button>
+        <button on:click={() => leftTab = "details"}
+          class="px-4 py-3.5 text-[13px] font-semibold flex items-center gap-[7px]"
+          style="color: {leftTab === 'details' ? 'var(--text)' : 'var(--text-3)'}; border-bottom: 2px solid {leftTab === 'details' ? 'var(--icp-pink)' : 'transparent'}; margin-bottom: -1px;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          Details & integrity
+        </button>
+      </div>
+
+      {#if leftTab === "preview"}
+        <div class="overflow-auto" style="height: 512px;">
+          {#if textPreviewContent !== null}
+            <pre class="m-0 p-[22px] text-[12.5px] leading-[1.7] whitespace-pre-wrap break-words" style="font-family: var(--font-mono); color: var(--text-2);">{textPreviewContent}</pre>
+          {:else if imageUrl}
+            <div class="flex items-center justify-center h-full p-5" style="background: radial-gradient(circle at 50% 40%, rgba(123,63,228,0.08), transparent 70%);">
+              <img src={imageUrl} alt={doc.name} class="max-w-full max-h-[480px] rounded-xl object-contain" />
+            </div>
+          {:else if pdfUrl}
+            <iframe src={pdfUrl} title={doc.name} class="w-full h-full border-0" style="min-height: 510px;"></iframe>
+          {:else if extractionLoading}
+            <div class="flex items-center justify-center h-full" style="color: var(--text-4);">
+              <div class="text-center space-y-3">
+                <div class="w-5 h-5 rounded-full mx-auto anim-spin" style="border: 2px solid var(--surface-hi); border-top-color: var(--icp-pink);"></div>
+                <p class="text-sm">Loading preview...</p>
+              </div>
+            </div>
+          {:else}
+            <div class="flex items-center justify-center h-full" style="color: var(--text-4);">
+              <div class="text-center space-y-3 p-5">
+                <div class="w-[80px] h-[80px] rounded-[20px] grid place-items-center mx-auto" style="background: var(--surface); border: 1px solid var(--border); color: {fileMeta.color};">
+                  <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v4a1 1 0 0 0 1 1h4 M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/></svg>
+                </div>
+                <p class="text-[13px]">Preview not available for this file type</p>
+                <p class="text-[12px]" style="color: var(--text-4);">Click Download to view the file</p>
+              </div>
+            </div>
+          {/if}
         </div>
-      {:else if pdfUrl}
-        <iframe src={pdfUrl} title={doc.name} class="w-full h-full min-h-[580px] rounded-lg border-0"></iframe>
       {:else}
-        <div class="flex items-center justify-center h-full text-gray-400">
-          <p>Preview not available for this file type. Click Download to view.</p>
+        <!-- Details panel -->
+        <div class="p-[22px]">
+          <!-- Metadata grid -->
+          <div class="grid grid-cols-2 gap-x-6 gap-y-3 mb-[22px]">
+            {#each [
+              ["Type", fileMeta.label],
+              ["Size", formatSize(doc.size)],
+              ["Chunks", Number(doc.totalChunks) + " × 1 MB"],
+              ["Encrypted", doc.isEncrypted ? "AES-256-GCM" : "No"],
+              ["Version", "v" + Number(doc.version || 1)],
+              ["Created", formatDate(doc.createdAt)]
+            ] as [label, value]}
+              <div class="flex justify-between pb-[9px]" style="border-bottom: 1px solid var(--border);">
+                <span class="text-[12.5px]" style="color: var(--text-4);">{label}</span>
+                <span class="text-[12.5px] font-semibold" style="color: var(--text-2);">{value}</span>
+              </div>
+            {/each}
+          </div>
+
+          <!-- Integrity section -->
+          <div class="ring-border rounded-[16px] p-[18px]" style="background: var(--grad-icp-soft);">
+            <div class="flex items-center gap-2.5 mb-2.5">
+              <span style="color: var(--green);">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 11a2 2 0 0 1 2 2c0 2.5-.5 4.5-1.5 6 M8.5 7.5A5 5 0 0 1 17 11c0 1-.1 2-.3 3 M5.5 11a6.5 6.5 0 0 1 3-5.5 M7 16c.8-1.2 1-2.6 1-3 M12 13c0 3-1 5.5-2.5 7.5"/></svg>
+              </span>
+              <h3 class="text-[14.5px] font-semibold">On-chain integrity</h3>
+              {#if docHashHex}
+                <span class="ml-auto text-[11px] font-semibold px-2 py-0.5 rounded-full flex items-center gap-1"
+                  style="color: var(--green); background: color-mix(in srgb, var(--green) 14%, transparent);">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+                  hash stored
+                </span>
+              {/if}
+            </div>
+            {#if docHashHex}
+              <div class="text-[10.5px] font-semibold mb-1.5" style="color: var(--text-4); letter-spacing: 0.03em;">SHA-256 · COMPUTED IN BACKEND CANISTER</div>
+              <div class="mono text-[11px] break-all leading-[1.6] p-[10px_12px] rounded-[10px]"
+                style="color: var(--text-2); background: var(--bg-2); border: 1px solid var(--border);">{docHashHex}</div>
+              <button on:click={() => showIntegrityProof = true}
+                class="btn-ghost w-full mt-3 py-[11px] text-[13px] flex items-center justify-center gap-2"
+                style="color: var(--green); border-color: color-mix(in srgb, var(--green) 30%, transparent);">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z M9 12l2 2 4-4"/></svg>
+                Verify integrity now
+              </button>
+            {:else}
+              <p class="text-[12px]" style="color: var(--text-4);">No integrity hash stored for this document.</p>
+            {/if}
+          </div>
+
+          <!-- Shared with -->
+          {#if accessList.length > 0}
+            <div class="mt-[22px]">
+              <h3 class="text-[13.5px] font-semibold mb-3">Shared with {accessList.length}</h3>
+              <div class="flex flex-col gap-2.5">
+                {#each accessList as acc}
+                  {@const pid = acc.grantedTo.toText()}
+                  <div class="flex items-center gap-2.5">
+                    <div class="w-[30px] h-[30px] rounded-full grid place-items-center text-[11px] font-bold font-display text-white"
+                      style="background: linear-gradient(135deg, var(--icp-purple), color-mix(in srgb, var(--icp-purple) 55%, #000));">
+                      {(usernames[pid] || pid).charAt(0).toUpperCase()}
+                    </div>
+                    <div class="flex-1 min-w-0">
+                      <div class="text-[13px] font-semibold">{usernames[pid] || pid.slice(0, 20) + "..."}</div>
+                      <div class="text-[11px] mono truncate" style="color: var(--text-4);">{pid}</div>
+                    </div>
+                    <span class="text-[11px] mono" style="color: var(--text-4);">{relTime(acc.grantedAt)}</span>
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/if}
+
+          <!-- Version history -->
+          {#if versions.length > 0}
+            <div class="mt-[22px]">
+              <h3 class="text-[13.5px] font-semibold mb-3">Version history</h3>
+              <div class="flex flex-col gap-[7px]">
+                <div class="flex justify-between p-[9px_12px] rounded-[9px]"
+                  style="background: color-mix(in srgb, var(--icp-cyan) 10%, transparent); border: 1px solid color-mix(in srgb, var(--icp-cyan) 24%, transparent);">
+                  <span class="text-[12.5px] font-semibold" style="color: var(--icp-cyan);">v{Number(doc.version || 1)} · current</span>
+                  <span class="text-[12px]" style="color: var(--text-3);">{formatSize(doc.size)}</span>
+                </div>
+                {#each [...versions].reverse() as ver}
+                  <div class="flex justify-between p-[9px_12px] rounded-[9px]"
+                    style="background: var(--surface); border: 1px solid var(--border);">
+                    <span class="text-[12.5px]" style="color: var(--text-3);">v{Number(ver.version)}</span>
+                    <span class="text-[12px]" style="color: var(--text-4);">{formatSize(ver.size)} · {relTime(ver.updatedAt)}</span>
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/if}
         </div>
       {/if}
     </div>
 
-    <!-- AI Summary & Info Panel -->
-    <div class="p-4 space-y-4">
-      <!-- AI Mode Toggle -->
-      <div class="flex items-center gap-2">
-        <button on:click={() => aiMode = "onchain"}
-          class="flex-1 px-2 py-1 text-xs font-medium rounded-lg transition {aiMode === 'onchain' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'}">
-          On-Chain AI
-        </button>
-        <button on:click={() => aiMode = "premium"}
-          class="flex-1 px-2 py-1 text-xs font-medium rounded-lg transition {aiMode === 'premium' ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'}">
-          Premium AI
-        </button>
-      </div>
+    <!-- RIGHT: AI panel -->
+    <div class="flex flex-col gap-3.5">
+      <!-- AI assistant card -->
+      <div class="glass rounded-[var(--r-lg)] p-4">
+        <div class="flex items-center gap-2 mb-3.5">
+          <span style="color: var(--icp-pink);">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3 M12 18v3 M5.6 5.6l2.1 2.1 M16.3 16.3l2.1 2.1 M3 12h3 M18 12h3 M5.6 18.4l2.1-2.1 M16.3 7.7l2.1-2.1"/></svg>
+          </span>
+          <h3 class="text-[15px] font-semibold">AI assistant</h3>
+          {#if category}
+            <span class="ml-auto text-[11px] font-semibold px-2 py-0.5 rounded-full"
+              style="color: var(--icp-purple); background: color-mix(in srgb, var(--icp-purple) 14%, transparent);">{category}</span>
+          {/if}
+        </div>
 
-      <!-- AI Summary -->
-      <div>
-        <div class="flex items-center justify-between mb-2">
-          <h3 class="text-sm font-semibold text-gray-900 dark:text-white">AI Summary</h3>
+        <!-- On-chain AI badge -->
+        <div class="flex items-center gap-1.5 mb-3.5 px-2.5 py-1.5 rounded-[8px] text-[11px] font-semibold" style="color: var(--green); background: color-mix(in srgb, var(--green) 10%, transparent); border: 1px solid color-mix(in srgb, var(--green) 22%, transparent); width: fit-content;">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7z M3.3 7L12 12l8.7-5 M12 22V12"/></svg>
+          On-chain · mo:llm
+        </div>
+
+        <!-- Summary -->
+        <div class="flex justify-between items-center mb-2">
+          <span class="text-[12px] font-bold" style="color: var(--text-3); letter-spacing: 0.03em;">SUMMARY</span>
           {#if aiDocumentContent}
             <button on:click={regenerateSummary} disabled={chatLoading}
-              class="text-xs text-primary-600 hover:text-primary-700 disabled:opacity-50">
-              {chatLoading ? "..." : "Regenerate"}
+              class="text-[11.5px] font-semibold flex items-center gap-1.5 disabled:opacity-50"
+              style="color: var(--icp-cyan);">
+              {#if chatLoading}
+                <div class="w-[11px] h-[11px] rounded-full anim-spin" style="border: 1.5px solid var(--surface-hi); border-top-color: var(--icp-cyan);"></div>
+                ...
+              {:else}
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6 M1 20v-6h6 M3.5 9a9 9 0 0 1 14.9-3.5L23 10 M1 14l4.6 4.5A9 9 0 0 0 20.5 15"/></svg>
+                Regenerate
+              {/if}
             </button>
           {/if}
         </div>
+
         {#if displayedSummary}
-          <p class="text-sm text-gray-600 dark:text-gray-400 leading-relaxed whitespace-pre-line">{displayedSummary}</p>
+          <p class="text-[13px] leading-[1.6] whitespace-pre-line m-0" style="color: var(--text-2);">{displayedSummary}</p>
         {:else if summaryLoading}
-          <p class="text-sm text-gray-400 italic">Decrypting summary...</p>
+          <p class="text-[13px] italic" style="color: var(--text-4);">Decrypting summary...</p>
         {:else if hasEncryptedSummary}
-          <p class="text-sm text-gray-400 italic">Encrypted summary available, but the document key is not available in this browser.</p>
+          <p class="text-[13px] italic" style="color: var(--text-4);">Encrypted summary available, but key not in this browser.</p>
         {:else}
-          <p class="text-sm text-gray-400 italic">No summary yet — it may still be generating.</p>
+          <p class="text-[13px] italic" style="color: var(--text-4);">No summary yet — it may still be generating.</p>
+        {/if}
+
+        <div class="flex items-center gap-1.5 mt-2.5 text-[10.5px]" style="color: var(--text-4);">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 11h14a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1z M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+          Summary encrypted with the document key before storage
+        </div>
+
+        {#if extractionLoading}
+          <div class="text-[12px] mt-3 p-2 rounded-lg" style="color: var(--text-4); background: var(--surface);">
+            Extracting AI-readable text...
+          </div>
+        {:else if extractionInfo}
+          <div class="text-[12px] mt-3 p-2 rounded-lg space-y-1" style="color: var(--text-4); background: var(--surface);">
+            <p class="font-semibold" style="color: var(--text-3);">AI Source</p>
+            <p>{describeExtraction(extractionInfo)}</p>
+            {#if extractionInfo.text && extractionInfo.warnings.length > 0}
+              <p>{extractionInfo.warnings[0]}</p>
+            {/if}
+          </div>
+        {/if}
+
+        <!-- Quick actions -->
+        {#if aiDocumentContent}
+          <div class="flex gap-2 mt-3.5">
+            <button on:click={fetchKeyPoints} disabled={chatLoading}
+              class="btn-ghost flex-1 py-[9px] text-[12px] flex items-center justify-center gap-1.5 disabled:opacity-50">
+              {#if chatLoading}
+                <div class="w-[13px] h-[13px] rounded-full anim-spin" style="border: 2px solid var(--surface-hi); border-top-color: var(--icp-pink);"></div>
+              {:else}
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13 M8 12h13 M8 18h13 M3 6h.01 M3 12h.01 M3 18h.01"/></svg>
+              {/if}
+              Key points
+            </button>
+            <button on:click={fetchCategory} disabled={chatLoading}
+              class="btn-ghost flex-1 py-[9px] text-[12px] flex items-center justify-center gap-1.5 disabled:opacity-50">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9h16 M4 15h16 M10 3v18 M14 3v18"/></svg>
+              Categorize
+            </button>
+          </div>
+        {/if}
+
+        <!-- Key points -->
+        {#if keyPoints}
+          <div class="fade-in mt-3.5 pt-3.5" style="border-top: 1px solid var(--border);">
+            <span class="text-[12px] font-bold" style="color: var(--text-3);">KEY POINTS</span>
+            <p class="text-[12.5px] leading-[1.6] whitespace-pre-line mt-2" style="color: var(--text-2);">{keyPoints}</p>
+          </div>
         {/if}
       </div>
 
-      {#if extractionLoading}
-        <div class="text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-700/50 rounded-lg p-2">
-          Extracting AI-readable text...
-        </div>
-      {:else if extractionInfo}
-        <div class="text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-700/50 rounded-lg p-2 space-y-1">
-          <p class="font-medium text-gray-700 dark:text-gray-300">AI Source</p>
-          <p>{describeExtraction(extractionInfo)}</p>
-          {#if extractionInfo.text && extractionInfo.warnings.length > 0}
-            <p>{extractionInfo.warnings[0]}</p>
-          {/if}
-        </div>
-      {/if}
-
-      <!-- Category Badge -->
-      {#if category}
-        <div class="flex items-center gap-2">
-          <span class="text-xs font-medium text-gray-500">Category:</span>
-          <span class="px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 rounded-full">{category}</span>
-        </div>
-      {/if}
-
-      <!-- AI Quick Actions -->
+      <!-- Chat card -->
       {#if aiDocumentContent}
-        <div class="flex gap-2">
-          <button on:click={fetchKeyPoints} disabled={chatLoading}
-            class="flex-1 px-2 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition disabled:opacity-50">
-            Key Points
-          </button>
-          <button on:click={fetchCategory} disabled={chatLoading}
-            class="flex-1 px-2 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition disabled:opacity-50">
-            Categorize
-          </button>
-        </div>
-      {/if}
+        <div class="glass rounded-[var(--r-lg)] p-4 flex flex-col" style="height: 380px;">
+          <div class="flex items-center gap-2 mb-3">
+            <span style="color: var(--icp-cyan);">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            </span>
+            <h3 class="text-[14px] font-semibold">Chat with document</h3>
+          </div>
 
-      <!-- Key Points -->
-      {#if keyPoints}
-        <div>
-          <h3 class="text-sm font-semibold text-gray-900 dark:text-white mb-2">Key Points</h3>
-          <p class="text-sm text-gray-600 dark:text-gray-400 leading-relaxed whitespace-pre-line">{keyPoints}</p>
-        </div>
-      {/if}
+          <!-- Messages -->
+          <div class="flex-1 overflow-y-auto flex flex-col gap-3 pr-1" style="min-height: 0;">
+            {#if chatMessages.length === 0}
+              <div class="text-center py-5" style="color: var(--text-4);">
+                <div class="w-[42px] h-[42px] rounded-xl grid place-items-center mx-auto mb-3"
+                  style="background: var(--grad-icp-soft); border: 1px solid var(--border); color: var(--icp-pink);">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                </div>
+                <div class="text-[13px] leading-[1.5]">
+                  Ask anything about this document.<br/>
+                  Answers are generated on-chain by the ICP LLM canister.
+                </div>
+              </div>
+            {/if}
 
-      <!-- AI Chat -->
-      {#if aiDocumentContent}
-        <div>
-          <h3 class="text-sm font-semibold text-gray-900 dark:text-white mb-2">Ask AI about this document</h3>
-          <div class="space-y-2 max-h-[200px] overflow-auto mb-2">
             {#each chatMessages as msg}
-              <div class="text-xs p-2 rounded-lg {msg.role === 'user' ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300 ml-4' : 'bg-gray-50 dark:bg-gray-700/50 text-gray-600 dark:text-gray-400 mr-4'}">
-                {msg.text}
+              <div class="fade-in flex flex-col" style="align-items: {msg.role === 'user' ? 'flex-end' : 'flex-start'};">
+                <div class="max-w-[86%] px-[13px] py-[10px] text-[13.5px] leading-[1.55] whitespace-pre-wrap"
+                  style="{msg.role === 'user'
+                    ? 'background: var(--grad-icp); color: #fff; border-radius: 14px 14px 4px 14px;'
+                    : 'background: var(--surface-hi); color: var(--text-2); border: 1px solid var(--border); border-radius: 14px 14px 14px 4px;'}">
+                  {msg.text}
+                </div>
+                {#if msg.role === "ai"}
+                  <div class="text-[10px] mt-1 ml-1 flex items-center gap-1.5" style="color: var(--text-4);">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7z"/></svg>
+                    on-chain · mo:llm
+                  </div>
+                {/if}
               </div>
             {/each}
+
             {#if chatLoading}
-              <div class="text-xs text-gray-400 animate-pulse p-2">Thinking...</div>
+              <div class="flex gap-1.5 p-[10px_13px]">
+                {#each [0, 1, 2] as i}
+                  <span class="w-1.5 h-1.5 rounded-full" style="background: var(--icp-pink); animation: pulse-soft 1s {i * 0.2}s infinite;"></span>
+                {/each}
+              </div>
             {/if}
           </div>
-          <form on:submit|preventDefault={sendChat} class="flex gap-2">
-            <input bind:value={chatInput} placeholder="Ask a question..."
-              class="flex-1 px-3 py-1.5 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-1 focus:ring-primary-500 focus:border-primary-500" />
+
+          <!-- Suggestion chips -->
+          {#if chatMessages.length === 0}
+            <div class="flex flex-wrap gap-[7px] my-3">
+              {#each ["Summarize the key points", "How is this secured?", "What about cycles cost?"] as suggestion}
+                <button on:click={() => { chatInput = suggestion; sendChat(); }}
+                  class="btn-ghost px-[11px] py-[6px] text-[11.5px] rounded-full font-medium">{suggestion}</button>
+              {/each}
+            </div>
+          {/if}
+
+          <!-- Input -->
+          <form on:submit|preventDefault={sendChat} class="flex gap-2 mt-3">
+            <input bind:value={chatInput} placeholder="Ask about this document..."
+              class="flex-1 px-3.5 py-[11px] rounded-xl text-[13.5px] outline-none"
+              style="background: var(--bg-2); border: 1px solid var(--border-hi); color: var(--text);" />
             <button type="submit" disabled={chatLoading || !chatInput.trim()}
-              class="px-3 py-1.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition disabled:opacity-50">
-              Send
+              class="btn-grad w-[44px] rounded-xl grid place-items-center disabled:opacity-50">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13 M22 2l-7 20-4-9-9-4z"/></svg>
             </button>
           </form>
         </div>
-      {/if}
-
-      {#if accessList.length > 0}
-        <div>
-          <h3 class="text-sm font-semibold text-gray-900 dark:text-white mb-2">Shared With</h3>
-          <div class="space-y-2">
-            {#each accessList as acc}
-              <div class="flex items-center justify-between text-xs">
-                <span class="text-gray-600 dark:text-gray-400 truncate" title={acc.grantedTo.toText()}>
-                  {usernames[acc.grantedTo.toText()] || acc.grantedTo.toText().slice(0, 20) + "..."}
-                </span>
-                <span class="text-gray-400">{formatDate(acc.grantedAt)}</span>
-              </div>
-            {/each}
-          </div>
-        </div>
-      {/if}
-
-      <div>
-        <h3 class="text-sm font-semibold text-gray-900 dark:text-white mb-2">Details</h3>
-        <dl class="space-y-1 text-xs">
-          <div class="flex justify-between">
-            <dt class="text-gray-500">Type</dt>
-            <dd class="text-gray-700 dark:text-gray-300">{doc.mimeType}</dd>
-          </div>
-          <div class="flex justify-between">
-            <dt class="text-gray-500">Created</dt>
-            <dd class="text-gray-700 dark:text-gray-300">{formatDate(doc.createdAt)}</dd>
-          </div>
-          <div class="flex justify-between">
-            <dt class="text-gray-500">Encrypted</dt>
-            <dd class="text-gray-700 dark:text-gray-300">{doc.isEncrypted ? "Yes" : "No"}</dd>
-          </div>
-          <div class="flex justify-between">
-            <dt class="text-gray-500">Version</dt>
-            <dd class="text-gray-700 dark:text-gray-300">v{Number(doc.version || 1)}</dd>
-          </div>
-          <div class="flex justify-between items-center">
-            <dt class="text-gray-500">Integrity</dt>
-            <dd>
-              {#if docHashHex}
-                <span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 rounded-full">
-                  <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 1a4.5 4.5 0 00-4.5 4.5V9H5a2 2 0 00-2 2v6a2 2 0 002 2h10a2 2 0 002-2v-6a2 2 0 00-2-2h-.5V5.5A4.5 4.5 0 0010 1zm3 8V5.5a3 3 0 10-6 0V9h6z" clip-rule="evenodd" /></svg>
-                  Hash stored
-                </span>
-              {:else}
-                <span class="text-gray-400 text-xs">Not certified</span>
-              {/if}
-            </dd>
-          </div>
-        </dl>
-
-        {#if docHashHex}
-          <div class="mt-2 p-2 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-            <p class="text-xs text-gray-500 mb-1">SHA-256 Hash:</p>
-            <p class="text-xs font-mono text-gray-600 dark:text-gray-400 break-all">{docHashHex}</p>
-            <button on:click={verifyIntegrity} disabled={verifying}
-              class="mt-2 w-full px-2 py-1 text-xs font-medium text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-900/20 rounded hover:bg-green-100 dark:hover:bg-green-900/30 transition disabled:opacity-50">
-              {verifying ? "Verifying..." : "Verify Integrity"}
-            </button>
-          </div>
-        {/if}
-      </div>
-
-      {#if versions.length > 0}
-        <div>
-          <h3 class="text-sm font-semibold text-gray-900 dark:text-white mb-2">Version History</h3>
-          <div class="space-y-2">
-            <div class="flex items-center justify-between text-xs p-2 bg-primary-50 dark:bg-primary-900/20 rounded">
-              <span class="font-medium text-primary-700 dark:text-primary-400">v{Number(doc.version || 1)} (current)</span>
-              <span class="text-gray-400">{formatSize(Number(doc.size))}</span>
-            </div>
-            {#each [...versions].reverse() as ver}
-              <div class="flex items-center justify-between text-xs p-2 bg-gray-50 dark:bg-gray-700/50 rounded">
-                <span class="text-gray-600 dark:text-gray-400">v{Number(ver.version)}</span>
-                <span class="text-gray-400">{formatSize(Number(ver.size))} &middot; {formatDate(ver.updatedAt)}</span>
-              </div>
-            {/each}
-          </div>
+      {:else}
+        <div class="glass rounded-[var(--r-lg)] p-[18px] text-center text-[12.5px] leading-[1.5]" style="color: var(--text-3);">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="mx-auto mb-2" style="color: var(--text-4);"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></svg>
+          {#if extractionLoading}
+            Extracting text for AI analysis...
+          {:else}
+            AI chat is not available for this file type.
+          {/if}
         </div>
       {/if}
     </div>
@@ -760,4 +944,8 @@
 
 {#if showShareModal}
   <ShareModal {doc} on:close={() => showShareModal = false} on:shared={loadDocument} />
+{/if}
+
+{#if showIntegrityProof && docHashHex}
+  <IntegrityProof hash={docHashHex} onVerify={verifyIntegrityForProof} on:close={() => showIntegrityProof = false} />
 {/if}

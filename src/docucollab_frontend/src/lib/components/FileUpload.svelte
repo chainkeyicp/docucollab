@@ -3,6 +3,7 @@
   import { notify, isLoading } from "$lib/stores/app";
   import { generateDocumentKey, encryptDocument, encryptText, saveDocumentKey } from "$lib/services/crypto";
   import { describeExtraction, extractTextFromBytes, isAiReadable } from "$lib/services/fileTextExtractors";
+  import OnChainUploadViz from "./OnChainUploadViz.svelte";
   import { createEventDispatcher } from "svelte";
 
   const dispatch = createEventDispatcher();
@@ -12,7 +13,10 @@
   let uploadProgress = 0;
   let extractionStatus = "";
   let extractionDetail = "";
-  let generateAiSummary = false;
+  let showUploadViz = false;
+  let uploadFileName = "";
+  let uploadTotalChunks = 1;
+  let summaryPhase = "idle"; // "idle" | "generating" | "done" | "failed" | "unavailable"
 
   function handleDragOver(e) {
     e.preventDefault();
@@ -41,32 +45,30 @@
 
     $isLoading = true;
     uploadProgress = 0;
+    uploadFileName = file.name;
+    showUploadViz = true;
+    summaryPhase = "idle";
 
     try {
       const originalBuffer = await file.arrayBuffer();
 
+      // Always extract text for AI summary
+      extractionStatus = "Extracting AI-readable text...";
+      extractionDetail = "";
       let textContent = null;
 
-      if (generateAiSummary) {
-        extractionStatus = "Extracting AI-readable text...";
-        extractionDetail = "";
+      const extraction = await extractTextFromBytes(originalBuffer.slice(0), {
+        name: file.name,
+        mimeType: file.type,
+        onProgress: (msg) => { extractionStatus = msg; },
+      });
 
-        const extraction = await extractTextFromBytes(originalBuffer.slice(0), {
-          name: file.name,
-          mimeType: file.type,
-          onProgress: (msg) => { extractionStatus = msg; },
-        });
-
-        extractionDetail = describeExtraction(extraction);
-        if (isAiReadable(extraction)) {
-          textContent = extraction.text;
-          extractionStatus = "AI text ready";
-        } else {
-          extractionStatus = "AI text unavailable";
-        }
+      extractionDetail = describeExtraction(extraction);
+      if (isAiReadable(extraction)) {
+        textContent = extraction.text;
+        extractionStatus = "AI text ready";
       } else {
-        extractionStatus = "Preparing encrypted upload...";
-        extractionDetail = "AI summary skipped. No summary will be stored.";
+        extractionStatus = "AI text unavailable";
       }
 
       await tickOnce();
@@ -77,6 +79,7 @@
       const encryptedData = await encryptDocument(originalBuffer, aesKey);
 
       const totalChunks = Math.ceil(encryptedData.byteLength / CHUNK_SIZE);
+      uploadTotalChunks = totalChunks;
 
       // Create document record (encrypted)
       const result = await backend.createDocument(
@@ -118,46 +121,57 @@
         console.warn("Finalize warning:", e);
       }
 
-      notify(
-        textContent
-          ? "Document uploaded & encrypted. AI summary queued."
-          : `Document uploaded & encrypted. ${extractionDetail}`,
-        textContent ? "success" : "info"
-      );
+      // Generate AI summary inline — wait for it to complete
+      summaryPhase = "generating";
+      await tickOnce(); // let viz react to summaryPhase change
+
+      if (textContent) {
+        try {
+          const ai = getAI();
+          if (ai) {
+            const summaryResult = await ai.summarizeText(textContent);
+            if ("ok" in summaryResult) {
+              const encSummary = await encryptText(summaryResult.ok, aesKey);
+              const saveResult = await backend.setEncryptedSummary(docId, encSummary.encrypted, encSummary.iv);
+              if ("err" in saveResult) throw new Error(saveResult.err);
+              summaryPhase = "done";
+            } else {
+              summaryPhase = "failed";
+            }
+          } else {
+            summaryPhase = "failed";
+          }
+        } catch (e) {
+          console.error("Summary error:", e);
+          summaryPhase = "failed";
+        }
+      } else {
+        summaryPhase = "unavailable";
+      }
+
+      await tickOnce(); // let viz react to final summaryPhase
       dispatch("uploaded");
 
-      // Trigger AI summary using text extracted before encryption.
-      if (textContent) {
-        triggerSummary(docId, textContent, aesKey);
+      if (summaryPhase === "done") {
+        notify("Document uploaded, encrypted & AI summary generated.", "success");
+      } else if (summaryPhase === "failed") {
+        notify("Document uploaded & encrypted. AI summary failed — you can regenerate it later.", "warning");
+      } else {
+        notify(`Document uploaded & encrypted. ${extractionDetail}`, "info");
       }
+
+      // Give user time to see the final state
+      await new Promise(r => setTimeout(r, 2000));
     } catch (e) {
       console.error("Upload error:", e);
       notify("Upload failed: " + e.message, "error");
     } finally {
       $isLoading = false;
+      showUploadViz = false;
       uploadProgress = 0;
       extractionStatus = "";
       extractionDetail = "";
-    }
-  }
-
-  async function triggerSummary(docId, text, aesKey) {
-    try {
-      const ai = getAI();
-      const backend = getBackend();
-      if (!ai || !backend) return;
-
-      const result = await ai.summarizeText(text);
-      if ("ok" in result) {
-        const encryptedSummary = await encryptText(result.ok, aesKey);
-        const saveResult = await backend.setEncryptedSummary(docId, encryptedSummary.encrypted, encryptedSummary.iv);
-        if ("err" in saveResult) throw new Error(saveResult.err);
-        dispatch("uploaded"); // refresh
-        notify("AI summary generated!", "success");
-      }
-    } catch (e) {
-      console.error("Summary error:", e);
-      notify("AI summary failed — you can regenerate it later.", "warning");
+      summaryPhase = "idle";
     }
   }
 
@@ -167,8 +181,10 @@
 </script>
 
 <div
-  class="border-2 border-dashed rounded-xl p-6 sm:p-8 text-center transition-colors cursor-pointer
-    {dragOver ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20' : 'border-gray-300 dark:border-gray-700 hover:border-primary-400'}"
+  class="rounded-[var(--r-lg)] p-6 sm:p-8 text-center cursor-pointer transition-all"
+  style="border: 1.5px dashed {dragOver ? 'var(--icp-pink)' : 'var(--border-hi)'};
+    background: {dragOver ? 'var(--grad-icp-soft)' : 'var(--surface)'};
+    transform: {dragOver ? 'scale(1.005)' : 'none'};"
   on:dragover={handleDragOver}
   on:dragleave={handleDragLeave}
   on:drop={handleDrop}
@@ -179,42 +195,46 @@
 
   {#if extractionStatus && uploadProgress === 0}
     <div class="space-y-3">
-      <svg class="w-10 h-10 mx-auto text-primary-500 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-      </svg>
-      <p class="text-sm text-gray-600 dark:text-gray-400">{extractionStatus}</p>
+      <div class="w-11 h-11 rounded-[13px] grid place-items-center mx-auto" style="background: var(--surface-hi); border: 1px solid var(--border); color: var(--icp-pink); animation: pulse-soft 1.2s infinite;">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v4a1 1 0 0 0 1 1h4 M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /></svg>
+      </div>
+      <p class="text-sm" style="color: var(--text-3);">{extractionStatus}</p>
       {#if extractionDetail}
-        <p class="text-xs text-gray-500">{extractionDetail}</p>
+        <p class="text-xs" style="color: var(--text-4);">{extractionDetail}</p>
       {/if}
     </div>
   {:else if uploadProgress > 0}
     <div class="space-y-3">
-      <svg class="w-10 h-10 mx-auto text-primary-500 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-      </svg>
-      <p class="text-sm text-gray-600 dark:text-gray-400">Uploading... {uploadProgress}%</p>
-      <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-        <div class="bg-primary-500 h-2 rounded-full transition-all" style="width: {uploadProgress}%"></div>
+      <div class="w-11 h-11 rounded-[13px] grid place-items-center mx-auto" style="background: var(--surface-hi); border: 1px solid var(--border); color: var(--icp-cyan); animation: pulse-soft 1s infinite;">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4 M7 9l5-5 5 5 M5 20h14" /></svg>
+      </div>
+      <p class="text-sm" style="color: var(--text-3);">Uploading... {uploadProgress}%</p>
+      <div class="w-full h-1.5 rounded-full overflow-hidden" style="background: var(--surface-hi);">
+        <div class="h-full rounded-full transition-all" style="width: {uploadProgress}%; background: var(--grad-icp);"></div>
       </div>
     </div>
   {:else}
     <div class="space-y-4">
-      <label for="file-input" class="block cursor-pointer space-y-3">
-        <svg class="w-10 h-10 mx-auto text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-        </svg>
-        <p class="text-sm text-gray-600 dark:text-gray-400">
-          <span class="font-semibold text-primary-600">Click to upload</span> or drag and drop
-        </p>
-        <p class="text-xs text-gray-500">Any file type supported</p>
-      </label>
-      <label for="ai-summary-toggle" class="mt-4 flex items-start gap-2 text-left max-w-sm mx-auto cursor-pointer">
-        <input id="ai-summary-toggle" type="checkbox" bind:checked={generateAiSummary}
-          class="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
-        <span class="text-xs text-gray-500">
-          Generate AI summary after upload. The encrypted document stays private; the summary is stored encrypted too.
-        </span>
+      <label for="file-input" class="block cursor-pointer">
+        <div class="inline-flex items-center gap-3.5">
+          <div class="w-11 h-11 rounded-[13px] grid place-items-center" style="background: var(--surface-hi); border: 1px solid var(--border); color: {dragOver ? 'var(--icp-pink)' : 'var(--icp-cyan)'};">
+            <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4 M7 9l5-5 5 5 M5 20h14" /></svg>
+          </div>
+          <div class="text-left">
+            <div class="font-bold text-[14.5px]">Drop a file to encrypt & store on-chain</div>
+            <div class="text-[12.5px]" style="color: var(--text-3);">Chunked at 1 MB · AES-256 in your browser · AI summary included</div>
+          </div>
+        </div>
       </label>
     </div>
   {/if}
 </div>
+
+{#if showUploadViz}
+  <OnChainUploadViz
+    fileName={uploadFileName}
+    totalChunks={uploadTotalChunks}
+    uploadProgress={uploadProgress}
+    {summaryPhase}
+    on:done={() => showUploadViz = false} />
+{/if}
