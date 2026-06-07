@@ -115,6 +115,13 @@ actor DocuCollabAI {
     }
   };
 
+  // SECURITY NOTE: This guard does NOT verify the caller is a registered DocuCollab user.
+  // The AI canister is intentionally a standalone utility — it accepts caller-provided text
+  // and never reads backend documents, so unauthorized access does not leak user data.
+  // Risk: cycles/budget abuse via sybil principals bypassing per-principal rate limits.
+  // Mitigation: global daily cap (MAX_AI_CALLS_PER_DAY) bounds total damage regardless of
+  // how many principals are used. Acceptable for MVP; future hardening options include
+  // inter-canister registration check or caller whitelist.
   func guardAiCaller(caller : Principal) : ?Text {
     if (Principal.isAnonymous(caller)) return ?"Anonymous callers not allowed";
     let now = Time.now();

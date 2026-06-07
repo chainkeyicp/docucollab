@@ -19,6 +19,7 @@
   let uploadFileName = "";
   let uploadTotalChunks = 1;
   let summaryPhase = "idle"; // "idle" | "generating" | "done" | "failed" | "unavailable"
+  let uploadHashHex = "";
 
   function handleDragOver(e) {
     e.preventDefault();
@@ -154,6 +155,9 @@
         return;
       }
       shouldCleanupDoc = false;
+      // Convert hash blob to hex for visualization
+      const hashBytes = new Uint8Array(finalizeResult.ok);
+      uploadHashHex = Array.from(hashBytes).map(b => b.toString(16).padStart(2, "0")).join("");
 
       // Generate AI summary inline — wait for it to complete
       summaryPhase = "generating";
@@ -209,6 +213,7 @@
       extractionStatus = "";
       extractionDetail = "";
       summaryPhase = "idle";
+      uploadHashHex = "";
     }
   }
 
@@ -281,6 +286,7 @@
     fileName={uploadFileName}
     totalChunks={uploadTotalChunks}
     uploadProgress={uploadProgress}
+    hashHex={uploadHashHex}
     {summaryPhase}
     on:done={() => showUploadViz = false} />
 {/if}

@@ -10,6 +10,7 @@
 
   let activeTab = "my-docs";
   let viewingDoc = null;
+  let viewingDocIsOwner = true;
   let showRegister = false;
   let username = "";
   let stats = { totalDocuments: 0, totalUsers: 0 };
@@ -201,6 +202,7 @@
 
   function handleView(e) {
     viewingDoc = e.detail;
+    viewingDocIsOwner = true;
   }
 
   function handleBatchShare(e) {
@@ -501,7 +503,7 @@
   </div>
 
 {:else if viewingDoc}
-  <DocumentView doc={viewingDoc} on:close={() => viewingDoc = null} />
+  <DocumentView doc={viewingDoc} isOwner={viewingDocIsOwner} on:close={() => viewingDoc = null} />
 
 {:else}
   <!-- ====== DASHBOARD ====== -->
@@ -629,7 +631,7 @@
       {:else}
         <div class="flex flex-col gap-2.5">
           {#each $sharedDocuments as doc}
-            <button on:click={() => viewingDoc = doc}
+            <button on:click={() => { viewingDoc = doc; viewingDocIsOwner = false; }}
               class="glass rounded-[var(--r-md)] p-3.5 flex items-center gap-3.5 cursor-pointer transition-all text-left w-full hover:border-[var(--border-hi)]">
               <div class="w-[42px] h-[42px] rounded-xl grid place-items-center flex-shrink-0"
                 style="background: color-mix(in srgb, var(--icp-purple) 13%, transparent); border: 1px solid color-mix(in srgb, var(--icp-purple) 26%, transparent); color: var(--icp-purple);">

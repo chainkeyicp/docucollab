@@ -11,6 +11,7 @@
   const MAX_ORIGINAL_FILE_SIZE = 50 * 1024 * 1024 - 1024; // leave room for AES-GCM overhead
 
   export let doc;
+  export let isOwner = true;
   let showShareModal = false;
   let textPreviewContent = null;
   let aiDocumentContent = null;
@@ -633,6 +634,7 @@
     </div>
     <div class="flex gap-2.5 flex-shrink-0">
       <input type="file" bind:this={versionFileInput} on:change={uploadNewVersion} class="hidden" />
+      {#if isOwner}
       <button on:click={() => versionFileInput.click()}
         class="btn-ghost px-[15px] py-[9px] text-[13px] flex items-center gap-[7px]">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9 M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4z"/></svg>
@@ -643,6 +645,7 @@
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M6 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M18 22a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M8.6 13.5l6.8 4 M15.4 6.5l-6.8 4"/></svg>
         Share
       </button>
+      {/if}
       <button on:click={downloadFile}
         class="btn-grad px-[16px] py-[9px] text-[13px] flex items-center gap-[7px]">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12 M7 11l5 5 5-5 M5 20h14"/></svg>

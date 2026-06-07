@@ -371,7 +371,7 @@ actor DocuCollab {
 
   // ===== DOCUMENT UPLOAD =====
 
-  public shared(msg) func createDocument(name : Text, mimeType : Text, size : Nat, totalChunks : Nat, isEncrypted : Bool) : async Result.Result<DocumentId, Text> {
+  public shared(msg) func createDocument(name : Text, mimeType : Text, size : Nat, totalChunks : Nat, _isEncrypted : Bool) : async Result.Result<DocumentId, Text> {
     let caller = msg.caller;
     if (Principal.isAnonymous(caller)) {
       return #err("Anonymous users cannot create documents");
@@ -400,7 +400,7 @@ actor DocuCollab {
       owner = caller;
       createdAt = now;
       updatedAt = now;
-      isEncrypted = isEncrypted;
+      isEncrypted = true; // always enforce encryption
       summary = null;
       totalChunks = totalChunks;
       version = ?1;
@@ -618,6 +618,9 @@ actor DocuCollab {
         };
         if (doc.isEncrypted and encryptedKey.size() == 0) {
           return #err("Encrypted documents require a wrapped document key for the recipient");
+        };
+        if (encryptedKey.size() > 512) {
+          return #err("Encrypted key is too large (max 512 bytes for RSA-2048 wrapped AES key)");
         };
         if (doc.isEncrypted and not hasRegisteredPublicKey(grantTo)) {
           return #err("Encrypted documents can only be shared with registered users that have a public key");

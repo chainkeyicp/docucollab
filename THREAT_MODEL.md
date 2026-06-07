@@ -30,6 +30,7 @@
 - Per-document integrity currently uses a canister-computed SHA-256 hash checked by the client. A future milestone should add a certified Merkle witness for `documentId/version/hash`.
 - Browser-stored private keys can be lost if the user clears browser storage and has not saved a recovery key.
 - Real-time collaborative editing is out of scope for the MVP.
+- **AI canister open access**: The AI canister (`pgg2h-miaaa-aaaau-agw7a-cai`) accepts calls from any non-anonymous principal without verifying DocuCollab registration. It processes caller-provided text only and never reads backend documents, so this does not expose user data. The risk is cycles/budget abuse via sybil principals bypassing per-principal rate limits (20 calls/10 min). The global daily cap (1000 calls/day) bounds total damage. Future hardening: inter-canister registration check or caller whitelist.
 
 ## Reviewer Checklist
 
