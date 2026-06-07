@@ -14,5 +14,9 @@
   "type": "module",
   "workspaces": [
     "src/docucollab_frontend"
-  ]
+  ],
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^4.0.4",
+    "svelte": "^5.56.2"
+  }
 }

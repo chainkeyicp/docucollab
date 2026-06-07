@@ -8,6 +8,7 @@
 
   const dispatch = createEventDispatcher();
   const CHUNK_SIZE = 1024 * 1024; // 1MB chunks
+  const MAX_ORIGINAL_FILE_SIZE = 50 * 1024 * 1024 - 1024; // leave room for AES-GCM overhead
 
   let dragOver = false;
   let uploadProgress = 0;
@@ -42,12 +43,18 @@
   async function uploadFile(file) {
     const backend = getBackend();
     if (!backend) return;
+    if (file.size > MAX_ORIGINAL_FILE_SIZE) {
+      notify("Files must be slightly under 50 MB so encrypted storage stays within the canister limit.", "error");
+      return;
+    }
 
     $isLoading = true;
     uploadProgress = 0;
     uploadFileName = file.name;
     showUploadViz = true;
     summaryPhase = "idle";
+    let createdDocId = null;
+    let shouldCleanupDoc = false;
 
     try {
       const originalBuffer = await file.arrayBuffer();
@@ -96,6 +103,8 @@
       }
 
       const docId = result.ok;
+      createdDocId = docId;
+      shouldCleanupDoc = true;
 
       // Save AES key in IndexedDB
       await saveDocumentKey(Number(docId), aesKey);
@@ -109,6 +118,8 @@
         const chunkResult = await backend.uploadChunk(docId, i, chunk);
         if ("err" in chunkResult) {
           notify(`Chunk upload failed: ${chunkResult.err}`, "error");
+          await cleanupCreatedDocument(backend, createdDocId);
+          shouldCleanupDoc = false;
           return;
         }
         uploadProgress = Math.round(((i + 1) / totalChunks) * 100);
@@ -118,8 +129,11 @@
       const finalizeResult = await backend.finalizeDocument(docId);
       if ("err" in finalizeResult) {
         notify(`Finalize failed: ${finalizeResult.err}`, "error");
+        await cleanupCreatedDocument(backend, createdDocId);
+        shouldCleanupDoc = false;
         return;
       }
+      shouldCleanupDoc = false;
 
       // Generate AI summary inline — wait for it to complete
       summaryPhase = "generating";
@@ -164,6 +178,9 @@
       await new Promise(r => setTimeout(r, 2000));
     } catch (e) {
       console.error("Upload error:", e);
+      if (shouldCleanupDoc && createdDocId !== null) {
+        await cleanupCreatedDocument(backend, createdDocId);
+      }
       notify("Upload failed: " + e.message, "error");
     } finally {
       $isLoading = false;
@@ -172,6 +189,15 @@
       extractionStatus = "";
       extractionDetail = "";
       summaryPhase = "idle";
+    }
+  }
+
+  async function cleanupCreatedDocument(backend, docId) {
+    if (docId === null || docId === undefined) return;
+    try {
+      await backend.deleteDocument(docId);
+    } catch (e) {
+      console.warn("Upload cleanup warning:", e);
     }
   }
 

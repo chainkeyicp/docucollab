@@ -1,7 +1,7 @@
 <script>
   import { isAuthenticated, documents, sharedDocuments, userProfile, isLoading, notify } from "$lib/stores/app";
   import { getBackend, getPrincipal } from "$lib/services/auth";
-  import { generateKeyPair, exportPublicKey, savePrivateKey, hasPrivateKey } from "$lib/services/crypto";
+  import { generateKeyPair, exportPublicKey, savePrivateKey, hasPrivateKey, exportRecoveryKey, importRecoveryKey } from "$lib/services/crypto";
   import FileUpload from "$lib/components/FileUpload.svelte";
   import DocumentList from "$lib/components/DocumentList.svelte";
   import DocumentView from "$lib/components/DocumentView.svelte";
@@ -16,6 +16,8 @@
   let batchShareIds = [];
   let showBatchShare = false;
   let batchShareIndex = 0;
+  let hasLocalPrivateKey = false;
+  let recoveryFileInput;
 
   import { onMount } from "svelte";
 
@@ -41,6 +43,7 @@
       const profile = await backend.getMyProfile();
       if (profile && profile.length > 0) {
         $userProfile = profile[0];
+        hasLocalPrivateKey = await hasPrivateKey();
         loadDocuments();
       } else {
         showRegister = true;
@@ -62,6 +65,7 @@
       const result = await backend.registerUser(username.trim(), publicKeyBytes);
       if ("ok" in result) {
         $userProfile = result.ok;
+        hasLocalPrivateKey = true;
         showRegister = false;
         notify("Welcome to DocuCollab! Your encryption keys have been generated.", "success");
         loadDocuments();
@@ -70,6 +74,40 @@
       }
     } catch (e) {
       notify("Registration failed: " + e.message, "error");
+    }
+  }
+
+  async function exportRecovery() {
+    try {
+      const keyBytes = await exportRecoveryKey();
+      const principal = getPrincipal()?.toText() || "principal";
+      const blob = new Blob([keyBytes], { type: "application/octet-stream" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `docucollab-recovery-${principal.slice(0, 8)}.key`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      notify("Recovery key exported.", "success");
+    } catch (e) {
+      notify("Recovery key export failed: " + e.message, "error");
+    }
+  }
+
+  async function importRecovery(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const keyBytes = new Uint8Array(await file.arrayBuffer());
+      await importRecoveryKey(keyBytes);
+      hasLocalPrivateKey = await hasPrivateKey();
+      notify("Recovery key imported.", "success");
+    } catch (err) {
+      notify("Recovery key import failed: " + err.message, "error");
+    } finally {
+      e.target.value = "";
     }
   }
 
@@ -453,16 +491,46 @@
     </div>
 
     <!-- Header -->
+    <input type="file" bind:this={recoveryFileInput} accept=".key,application/octet-stream" on:change={importRecovery} class="hidden" />
     <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
       <h1 class="font-display text-2xl font-bold">Documents</h1>
-      <button on:click={() => copyText(getPrincipal()?.toText() || '')}
-        class="glass inline-flex items-center gap-2 px-3 py-1.5 rounded-full font-mono text-[12.5px] transition-all hover:border-[var(--border-hi)]"
-        style="color: var(--text-2);" title="Click to copy principal">
-        <span class="font-body font-semibold" style="color: var(--text-4);">principal</span>
-        <span>{getPrincipal()?.toText()?.slice(0, 8)}...{getPrincipal()?.toText()?.slice(-5)}</span>
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-4);"><path d="M9 9h10a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1z M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" /></svg>
-      </button>
+      <div class="flex items-center gap-2 flex-wrap justify-end">
+        <button on:click={exportRecovery}
+          disabled={!hasLocalPrivateKey}
+          class="glass inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-[12.5px] font-semibold transition-all hover:border-[var(--border-hi)]"
+          style="color: var(--text-2); opacity: {hasLocalPrivateKey ? 1 : 0.45};" title="Export recovery key">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-4);"><path d="M12 3v12 M7 10l5 5 5-5 M5 21h14" /></svg>
+          Export key
+        </button>
+        <button on:click={() => recoveryFileInput?.click()}
+          class="glass inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-[12.5px] font-semibold transition-all hover:border-[var(--border-hi)]"
+          style="color: var(--text-2);" title="Import recovery key">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-4);"><path d="M12 21V9 M7 14l5-5 5 5 M5 3h14" /></svg>
+          Import key
+        </button>
+        <button on:click={() => copyText(getPrincipal()?.toText() || '')}
+          class="glass inline-flex items-center gap-2 px-3 py-1.5 rounded-full font-mono text-[12.5px] transition-all hover:border-[var(--border-hi)]"
+          style="color: var(--text-2);" title="Click to copy principal">
+          <span class="font-body font-semibold" style="color: var(--text-4);">principal</span>
+          <span>{getPrincipal()?.toText()?.slice(0, 8)}...{getPrincipal()?.toText()?.slice(-5)}</span>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-4);"><path d="M9 9h10a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1z M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" /></svg>
+        </button>
+      </div>
     </div>
+
+    {#if !hasLocalPrivateKey}
+      <div class="glass rounded-[var(--r-lg)] p-4 mb-4 flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+        <div>
+          <div class="text-[14px] font-semibold">Local encryption key missing</div>
+          <div class="text-[12.5px] mt-0.5" style="color: var(--text-3);">Import your recovery key to decrypt existing encrypted documents in this browser.</div>
+        </div>
+        <button on:click={() => recoveryFileInput?.click()}
+          class="btn-ghost px-[14px] py-[9px] text-[13px] flex items-center justify-center gap-[7px] flex-shrink-0">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21V9 M7 14l5-5 5 5 M5 3h14" /></svg>
+          Import recovery key
+        </button>
+      </div>
+    {/if}
 
     <!-- Upload -->
     <div class="mb-5">

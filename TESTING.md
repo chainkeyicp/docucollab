@@ -1,6 +1,6 @@
 # Testing Notes
 
-Last checked: 2026-06-06
+Last checked: 2026-06-07
 
 ## Automated Checks
 
@@ -12,7 +12,7 @@ Result: passes.
 
 Known warning: `Cycles.add` is deprecated in the current Motoko compiler. The replacement `with cycles` syntax is recommended by the warning, but this project currently targets `dfx 0.25.0`, whose `moc` rejected that syntax during testing. The project keeps `Cycles.add` for build compatibility.
 
-Confirmed again after adding access checks to `getVersions`, `getDocumentHash`, and `getDocumentHashHex`.
+Confirmed again after adding upload cleanup, pending-version cancellation, scoped key storage, recovery key UI, AI budget guards, and admin bootstrap hardening.
 
 ```bash
 cd src/docucollab_frontend
@@ -27,7 +27,7 @@ npm run build
 
 Result: passes.
 
-Known warning: Vite/SvelteKit emits dependency export warnings related to the installed SvelteKit/Svelte combination. These warnings were present before the grant-readiness changes and do not fail the production build.
+The previous SvelteKit/Svelte dependency export warnings are resolved by aligning the frontend toolchain with Svelte 5. Svelte markup and accessibility warnings are clean in the production build.
 
 The production build copies self-hosted OCR assets into `dist/vendor/tesseract`, including the Tesseract worker, core WASM loaders, and English/Bulgarian traineddata files.
 
@@ -77,9 +77,9 @@ Local URL: `http://127.0.0.1:5178/`
 
 Checked:
 
-- Page title is `DocuCollab - Decentralized Document Collaboration`.
+- Page title is `DocuCollab - Decentralized Document Collaboration on ICP`.
 - Landing headline is visible.
-- Updated labels `On-Chain Hash` and `ICP Native` are visible.
+- Login with Internet Identity CTA is visible.
 - Old claims `2 GB` and `Certified Integrity` are not visible.
 - Browser console has 0 errors on initial load.
 
@@ -90,3 +90,4 @@ Checked:
 - Upload a scanned PDF; verify OCR extracts text from the first pages and reports the page limit if applicable.
 - Upload a non-readable binary file; verify no summary metadata is added and the app reports that AI text is unavailable.
 - Share an encrypted document between two Internet Identity users; verify recipient decrypts, opens, and downloads it.
+- Export a recovery key, open the same Internet Identity principal in a fresh browser profile, import the recovery key, and verify existing encrypted documents decrypt.

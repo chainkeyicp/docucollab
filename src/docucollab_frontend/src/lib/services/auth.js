@@ -2,6 +2,7 @@ import { AuthClient } from "@dfinity/auth-client";
 import { HttpAgent } from "@dfinity/agent";
 import { createActor as createBackendActor, canisterId as backendCanisterId } from "declarations/docucollab_backend";
 import { createActor as createAiActor, canisterId as aiCanisterId } from "declarations/docucollab_ai";
+import { clearKeyScope, setKeyScope } from "./crypto";
 
 let authClient = null;
 let backendActor = null;
@@ -33,6 +34,7 @@ export async function initAuth() {
 
 async function setupActors() {
   const identity = authClient.getIdentity();
+  setKeyScope(identity.getPrincipal().toText());
   const host = getReplicaHost();
   const agent = await HttpAgent.create({ identity, host });
 
@@ -67,6 +69,7 @@ export async function logout() {
   await authClient.logout();
   backendActor = null;
   aiActor = null;
+  clearKeyScope();
 }
 
 export function isAuthenticated() {

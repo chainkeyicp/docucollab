@@ -3,6 +3,15 @@
 
 const DB_NAME = "docucollab_keys";
 const DB_VERSION = 1;
+let keyScope = "legacy";
+
+export function setKeyScope(principalText) {
+  keyScope = principalText || "legacy";
+}
+
+export function clearKeyScope() {
+  keyScope = "legacy";
+}
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -36,6 +45,30 @@ async function dbPut(key, value) {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
+}
+
+function scopedKey(key) {
+  return `${keyScope}:${key}`;
+}
+
+async function dbGetScoped(key) {
+  const current = scopedKey(key);
+  const scoped = await dbGet(current);
+  if (scoped) return scoped;
+
+  if (keyScope !== "legacy") {
+    const legacy = await dbGet(key);
+    if (legacy) {
+      await dbPut(current, legacy);
+      return legacy;
+    }
+  }
+
+  return null;
+}
+
+async function dbPutScoped(key, value) {
+  await dbPut(scopedKey(key), value);
 }
 
 // === AES-GCM Document Encryption ===
@@ -166,22 +199,22 @@ export async function decryptKeyWithPrivateKey(encryptedAesKey, privateKey) {
 
 export async function saveDocumentKey(docId, aesKey) {
   const raw = await exportKey(aesKey);
-  await dbPut(`doc_${docId}`, raw);
+  await dbPutScoped(`doc_${docId}`, raw);
 }
 
 export async function getDocumentKey(docId) {
-  const raw = await dbGet(`doc_${docId}`);
+  const raw = await dbGetScoped(`doc_${docId}`);
   if (!raw) return null;
   return await importKey(raw);
 }
 
 export async function savePrivateKey(privateKey) {
   const pkcs8 = await crypto.subtle.exportKey("pkcs8", privateKey);
-  await dbPut("privateKey", new Uint8Array(pkcs8));
+  await dbPutScoped("privateKey", new Uint8Array(pkcs8));
 }
 
 export async function getPrivateKey() {
-  const pkcs8 = await dbGet("privateKey");
+  const pkcs8 = await dbGetScoped("privateKey");
   if (!pkcs8) return null;
   return await crypto.subtle.importKey(
     "pkcs8",
@@ -193,14 +226,14 @@ export async function getPrivateKey() {
 }
 
 export async function hasPrivateKey() {
-  const pk = await dbGet("privateKey");
+  const pk = await dbGetScoped("privateKey");
   return pk != null;
 }
 
 // === Recovery Key Export ===
 
 export async function exportRecoveryKey() {
-  const pkcs8 = await dbGet("privateKey");
+  const pkcs8 = await dbGetScoped("privateKey");
   if (!pkcs8) throw new Error("No private key found");
   return pkcs8;
 }
@@ -213,6 +246,6 @@ export async function importRecoveryKey(pkcs8Bytes) {
     true,
     ["unwrapKey"]
   );
-  await dbPut("privateKey", new Uint8Array(pkcs8Bytes));
+  await dbPutScoped("privateKey", new Uint8Array(pkcs8Bytes));
   return privateKey;
 }

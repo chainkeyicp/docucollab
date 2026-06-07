@@ -122,6 +122,7 @@ actor DocuCollab {
   var encryptedSummaries = HashMap.HashMap<DocumentId, EncryptedSummary>(16, Nat.equal, func(n : Nat) : Nat32 { Nat32.fromNat(n % 2147483647) });
   var pendingVersions = HashMap.HashMap<DocumentId, PendingVersion>(16, Nat.equal, func(n : Nat) : Nat32 { Nat32.fromNat(n % 2147483647) });
 
+  let BOOTSTRAP_ADMIN : Principal = Principal.fromText("hitz2-x2re7-nstm2-xmor4-yafac-enmkh-z7r2d-odjug-wlstk-mmaj3-7qe");
   let MAX_DOCUMENT_SIZE : Nat = 50 * 1024 * 1024;
   let MAX_CHUNK_SIZE : Nat = 1_100_000;
   let MAX_CHUNKS : Nat = 64;
@@ -186,6 +187,14 @@ actor DocuCollab {
     "pending-" # Nat.toText(docId) # "-" # Nat.toText(chunkId)
   };
 
+  func deletePendingVersionChunks(docId : DocumentId, pending : PendingVersion) {
+    var i : Nat = 0;
+    while (i < pending.totalChunks) {
+      chunks.delete(pendingChunkKey(docId, i));
+      i += 1;
+    };
+  };
+
   func accessKey(docId : DocumentId, p : Principal) : Text {
     Nat.toText(docId) # "-" # Principal.toText(p)
   };
@@ -203,6 +212,29 @@ actor DocuCollab {
 
   func getVersion(v : ?Nat) : Nat {
     switch (v) { case (?n) n; case null 1 };
+  };
+
+  func removeDocFromUserDocs(p : Principal, docId : DocumentId) {
+    switch (userDocs.get(p)) {
+      case (?buf) {
+        let newBuf = Buffer.Buffer<DocumentId>(buf.size());
+        for (id in buf.vals()) {
+          if (id != docId) newBuf.add(id);
+        };
+        userDocs.put(p, newBuf);
+      };
+      case null {};
+    };
+  };
+
+  func removeDocFromAllUserDocs(docId : DocumentId) {
+    let principals = Buffer.Buffer<Principal>(userDocs.size());
+    for ((p, _) in userDocs.entries()) {
+      principals.add(p);
+    };
+    for (p in principals.vals()) {
+      removeDocFromUserDocs(p, docId);
+    };
   };
 
   func hasRegisteredPublicKey(p : Principal) : Bool {
@@ -292,7 +324,11 @@ actor DocuCollab {
       };
     };
     switch (adminPrincipal) {
-      case null { adminPrincipal := ?caller };
+      case null {
+        if (Principal.equal(caller, BOOTSTRAP_ADMIN)) {
+          adminPrincipal := ?caller;
+        };
+      };
       case (?_) {};
     };
     let profile : UserProfile = {
@@ -530,11 +566,7 @@ actor DocuCollab {
         };
         switch (pendingVersions.get(docId)) {
           case (?pending) {
-            var pendingIndex : Nat = 0;
-            while (pendingIndex < pending.totalChunks) {
-              chunks.delete(pendingChunkKey(docId, pendingIndex));
-              pendingIndex += 1;
-            };
+            deletePendingVersionChunks(docId, pending);
             pendingVersions.delete(docId);
           };
           case null {};
@@ -548,16 +580,7 @@ actor DocuCollab {
         for (key in keysToRemove.vals()) {
           access.delete(key);
         };
-        switch (userDocs.get(caller)) {
-          case (?buf) {
-            let newBuf = Buffer.Buffer<DocumentId>(buf.size());
-            for (id in buf.vals()) {
-              if (id != docId) newBuf.add(id);
-            };
-            userDocs.put(caller, newBuf);
-          };
-          case null {};
-        };
+        removeDocFromAllUserDocs(docId);
         logActivity(#delete, caller, docId, doc.name, null);
         encryptedSummaries.delete(docId);
         documents.delete(docId);
@@ -616,16 +639,7 @@ actor DocuCollab {
         };
         access.delete(accessKey(docId, revokeFrom));
         logActivity(#revoke, caller, docId, doc.name, ?revokeFrom);
-        switch (userDocs.get(revokeFrom)) {
-          case (?buf) {
-            let newBuf = Buffer.Buffer<DocumentId>(buf.size());
-            for (id in buf.vals()) {
-              if (id != docId) newBuf.add(id);
-            };
-            userDocs.put(revokeFrom, newBuf);
-          };
-          case null {};
-        };
+        removeDocFromUserDocs(revokeFrom, docId);
         #ok()
       };
       case null #err("Document not found");
@@ -712,11 +726,7 @@ actor DocuCollab {
         };
         switch (pendingVersions.get(docId)) {
           case (?oldPending) {
-            var j : Nat = 0;
-            while (j < oldPending.totalChunks) {
-              chunks.delete(pendingChunkKey(docId, j));
-              j += 1;
-            };
+            deletePendingVersionChunks(docId, oldPending);
           };
           case null {};
         };
@@ -730,6 +740,26 @@ actor DocuCollab {
         };
         pendingVersions.put(docId, pending);
         #ok(newVersion)
+      };
+      case null #err("Document not found");
+    };
+  };
+
+  public shared(msg) func cancelPendingVersion(docId : DocumentId) : async Result.Result<(), Text> {
+    let caller = msg.caller;
+    switch (documents.get(docId)) {
+      case (?doc) {
+        if (not Principal.equal(doc.owner, caller)) {
+          return #err("Only the owner can cancel pending versions");
+        };
+        switch (pendingVersions.get(docId)) {
+          case (?pending) {
+            deletePendingVersionChunks(docId, pending);
+            pendingVersions.delete(docId);
+          };
+          case null {};
+        };
+        #ok()
       };
       case null #err("Document not found");
     };

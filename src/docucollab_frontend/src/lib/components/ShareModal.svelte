@@ -165,7 +165,7 @@
         <h3 class="font-display text-[17px] font-semibold">Share document</h3>
         <p class="text-[12.5px] truncate max-w-[300px]" style="color: var(--text-3);">{doc.name}</p>
       </div>
-      <button on:click={() => dispatch("close")} class="btn-ghost w-8 h-8 rounded-[9px] grid place-items-center p-0">
+      <button on:click={() => dispatch("close")} class="btn-ghost w-8 h-8 rounded-[9px] grid place-items-center p-0" aria-label="Close share dialog" title="Close">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12 M18 6L6 18" /></svg>
       </button>
     </div>

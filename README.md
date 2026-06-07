@@ -186,8 +186,9 @@ docucollab/
 3. **Certified Assets** -- Frontend served with cryptographic verification
 4. **Stable Memory** -- Data persists across canister upgrades
 5. **On-chain SHA-256 integrity checks** -- document chunk hashes are computed in the backend canister and can be verified by the client
-6. **Client-side extraction before encrypted storage** -- AI-readable text is derived in the browser; plaintext extracted text is not stored in the backend canister, and opt-in summaries are encrypted with the document key before storage
-7. **Optional HTTPS Outcalls** -- premium AI mode can call an external API directly from a canister when configured
+6. **Client-side extraction before encrypted storage** -- AI-readable text is derived in the browser; plaintext extracted text is not stored in the backend canister, and generated summaries are encrypted with the document key before storage
+7. **Principal-scoped local keys** -- browser key storage is scoped per Internet Identity principal, with recovery key export/import for restoring the same identity on another browser
+8. **Optional HTTPS Outcalls** -- premium AI mode can call an external API directly from a canister when configured
 
 ## License
 

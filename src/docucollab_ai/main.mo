@@ -52,12 +52,16 @@ actor DocuCollabAI {
   let BOOTSTRAP_ADMIN : Principal = Principal.fromText("hitz2-x2re7-nstm2-xmor4-yafac-enmkh-z7r2d-odjug-wlstk-mmaj3-7qe");
   let DEFAULT_ANTHROPIC_URL : Text = "https://api.anthropic.com/v1/messages";
   let AI_WINDOW_NS : Int = 10 * 60 * 1_000_000_000;
+  let AI_DAY_NS : Int = 24 * 60 * 60 * 1_000_000_000;
   let MAX_AI_CALLS_PER_WINDOW : Nat = 20;
+  let MAX_AI_CALLS_PER_DAY : Nat = 1_000;
 
   stable var apiKey : Text = "";
   stable var apiUrl : Text = "https://api.anthropic.com/v1/messages";
   stable var adminPrincipal : ?Principal = null;
   stable var stableRateWindows : [(Principal, RateWindow)] = [];
+  stable var dailyAiWindowStart : Int = 0;
+  stable var dailyAiCallCount : Nat = 0;
 
   var rateWindows = HashMap.HashMap<Principal, RateWindow>(64, Principal.equal, Principal.hash);
 
@@ -114,20 +118,30 @@ actor DocuCollabAI {
   func guardAiCaller(caller : Principal) : ?Text {
     if (Principal.isAnonymous(caller)) return ?"Anonymous callers not allowed";
     let now = Time.now();
+    if (dailyAiWindowStart == 0 or now - dailyAiWindowStart >= AI_DAY_NS) {
+      dailyAiWindowStart := now;
+      dailyAiCallCount := 0;
+    };
+    if (dailyAiCallCount >= MAX_AI_CALLS_PER_DAY) {
+      return ?"Daily AI budget reached. Please try again tomorrow.";
+    };
     switch (rateWindows.get(caller)) {
       case (?window) {
         if (now - window.startedAt >= AI_WINDOW_NS) {
           rateWindows.put(caller, { startedAt = now; count = 1 });
+          dailyAiCallCount += 1;
           null
         } else if (window.count >= MAX_AI_CALLS_PER_WINDOW) {
           ?"AI rate limit reached. Please try again later."
         } else {
           rateWindows.put(caller, { startedAt = window.startedAt; count = window.count + 1 });
+          dailyAiCallCount += 1;
           null
         }
       };
       case null {
         rateWindows.put(caller, { startedAt = now; count = 1 });
+        dailyAiCallCount += 1;
         null
       };
     }

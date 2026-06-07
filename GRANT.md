@@ -2,7 +2,7 @@
 
 ## Summary
 
-DocuCollab is an ICP-native document sharing and collaboration MVP. It stores encrypted document chunks in a Motoko backend canister, serves the frontend through an asset canister, authenticates users with Internet Identity, and uses a dedicated AI canister for opt-in document summaries, chat, key point extraction, and categorization.
+DocuCollab is an ICP-native document sharing and collaboration MVP. It stores encrypted document chunks in a Motoko backend canister, serves the frontend through an asset canister, authenticates users with Internet Identity, and uses a dedicated AI canister for automatic encrypted document summaries, chat, key point extraction, and categorization.
 
 Live demo: https://ppfr3-2aaaa-aaaau-agw6q-cai.icp0.io/
 
@@ -29,7 +29,7 @@ DocuCollab is built around capabilities that are specific to the Internet Comput
 - Per-user activity log.
 - Client-side AI-readable text extraction for TXT/MD/JSON/HTML, PDF, DOCX, CSV, and XLSX.
 - Browser-side OCR via Tesseract.js for images and scanned PDFs, with English and Bulgarian OCR runtime/language assets served from the frontend asset canister.
-- Opt-in AI summaries, document chat, key points, and categorization over extracted text.
+- Automatic encrypted AI summaries, document chat, key points, and categorization over extracted text.
 - AI summaries are encrypted in the browser with the document key before canister storage.
 - Search across document names and locally decrypted AI-generated summaries.
 - On-chain SHA-256 integrity hash checks.

@@ -8,6 +8,7 @@
   import { createEventDispatcher, onDestroy } from "svelte";
 
   const dispatch = createEventDispatcher();
+  const MAX_ORIGINAL_FILE_SIZE = 50 * 1024 * 1024 - 1024; // leave room for AES-GCM overhead
 
   export let doc;
   let showShareModal = false;
@@ -330,8 +331,14 @@
     if (!file) return;
     const backend = getBackend();
     if (!backend) return;
+    if (file.size > MAX_ORIGINAL_FILE_SIZE) {
+      notify("Files must be slightly under 50 MB so encrypted storage stays within the canister limit.", "error");
+      e.target.value = "";
+      return;
+    }
 
     $isLoading = true;
+    let pendingStarted = false;
     try {
       const arrayBuffer = await file.arrayBuffer();
       const CHUNK_SIZE = 1024 * 1024;
@@ -362,6 +369,7 @@
         notify(result.err, "error");
         return;
       }
+      pendingStarted = true;
 
       for (let i = 0; i < totalChunks; i++) {
         const start = i * CHUNK_SIZE;
@@ -370,6 +378,8 @@
         const chunkResult = await backend.uploadChunk(doc.id, i, chunk);
         if ("err" in chunkResult) {
           notify(`Chunk upload failed: ${chunkResult.err}`, "error");
+          await cleanupPendingVersion(backend, doc.id);
+          pendingStarted = false;
           return;
         }
       }
@@ -377,8 +387,11 @@
       const finalizeResult = await backend.finalizeDocument(doc.id);
       if ("err" in finalizeResult) {
         notify(`Version finalize failed: ${finalizeResult.err}`, "error");
+        await cleanupPendingVersion(backend, doc.id);
+        pendingStarted = false;
         return;
       }
+      pendingStarted = false;
 
       const shouldRefreshSummary = textContent && displayedSummary;
       let summaryUpdated = false;
@@ -405,9 +418,21 @@
       );
       dispatch("close");
     } catch (e) {
+      if (pendingStarted) {
+        await cleanupPendingVersion(backend, doc.id);
+      }
       notify("Version upload failed: " + e.message, "error");
     } finally {
       $isLoading = false;
+      e.target.value = "";
+    }
+  }
+
+  async function cleanupPendingVersion(backend, docId) {
+    try {
+      await backend.cancelPendingVersion(docId);
+    } catch (e) {
+      console.warn("Pending version cleanup warning:", e);
     }
   }
 
@@ -554,7 +579,7 @@
   <!-- Header -->
   <div class="flex items-center justify-between mb-[18px] gap-3.5 flex-wrap">
     <div class="flex items-center gap-3.5 min-w-0">
-      <button on:click={close} class="btn-ghost w-[38px] h-[38px] rounded-[11px] grid place-items-center p-0 flex-shrink-0">
+      <button on:click={close} class="btn-ghost w-[38px] h-[38px] rounded-[11px] grid place-items-center p-0 flex-shrink-0" aria-label="Back to documents" title="Back">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <!-- FileGlyph -->
@@ -904,7 +929,7 @@
             <input bind:value={chatInput} placeholder="Ask about this document..."
               class="flex-1 px-3.5 py-[11px] rounded-xl text-[13.5px] outline-none"
               style="background: var(--bg-2); border: 1px solid var(--border-hi); color: var(--text);" />
-            <button type="submit" disabled={chatLoading || !chatInput.trim()}
+            <button type="submit" disabled={chatLoading || !chatInput.trim()} aria-label="Send message" title="Send"
               class="btn-grad w-[44px] rounded-xl grid place-items-center disabled:opacity-50">
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13 M22 2l-7 20-4-9-9-4z"/></svg>
             </button>
